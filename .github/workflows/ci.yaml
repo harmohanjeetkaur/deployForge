@@ -20,6 +20,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: app/go.mod
+          cache-dependency-path: app/go.mod
 
       - name: Run tests
         working-directory: ./app
@@ -32,3 +33,6 @@ jobs:
       - name: Build
         working-directory: ./app
         run: go build -o deployforge-api ./cmd/api
+
+      - name: Build Docker image
+        run: docker build -t deployforge:ci ./app
