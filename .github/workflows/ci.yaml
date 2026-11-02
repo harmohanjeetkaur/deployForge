@@ -1,4 +1,4 @@
-name: CI
+name: DeployForge - Build & Security
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
       - main
 
 jobs:
-  test:
+  build-and-scan:
+    name: Build, Test & Security Scan
     runs-on: ubuntu-latest
 
     steps:
