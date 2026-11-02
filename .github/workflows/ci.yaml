@@ -39,6 +39,12 @@ jobs:
         working-directory: ./app
         run: go build -o deployforge-api ./cmd/api
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build Docker image
         run: docker build -t deployforge:ci ./app
 
@@ -58,10 +64,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tag and push to GHCR
+      - name: Build and push multi-platform image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          docker tag deployforge:ci ghcr.io/harmohanjeetkaur/deployforge:latest
-          docker tag deployforge:ci ghcr.io/harmohanjeetkaur/deployforge:${{ github.sha }}
-          docker push ghcr.io/harmohanjeetkaur/deployforge:latest
-          docker push ghcr.io/harmohanjeetkaur/deployforge:${{ github.sha }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/harmohanjeetkaur/deployforge:latest
+            ghcr.io/harmohanjeetkaur/deployforge:${{ github.sha }}
