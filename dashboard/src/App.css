@@ -705,3 +705,18 @@
 .phase-succeeded { color: var(--success-color); }
 .phase-failed { color: var(--danger-color); }
 .version-select:disabled { opacity: 0.6; }
+
+.rollback-help {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.operation-requirements {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+.operation-requirements ul { padding-left: 20px; }

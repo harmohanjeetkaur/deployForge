@@ -49,3 +49,32 @@ The repository includes dependency lockfiles, source, tests, and documentation.
 Dependencies, environment/credential files, logs, coverage, browser reports, and
 build output are ignored. The available-image entry is a fixed portfolio example,
 not a live registry listing; security findings shown in the UI are demo data.
+
+## Rollback
+
+On Deployments, choose a previous eligible Kubernetes revision, verify its GHCR
+image, and select Rollback. The confirmation displays current and target images.
+Rollback uses the same authentication, default dry-run protection, Git validation,
+shared operation lock, and ArgoCD/Kubernetes convergence checks as deployment.
+A real rollback creates a new Helm image-tag commit rather than changing
+Kubernetes directly. See [rollback behavior and limitations](server/README.md#explicit-gitops-rollback).
+
+## Disabled deployment and rollback buttons
+
+Authentication is required even for dry-runs. Enter the backend's current token,
+select a different valid SHA image, and verify both GHCR platforms. Dry-run mode
+itself does not disable the buttons. The dashboard lists missing prerequisites.
+
+Rollback also requires an explicit `rollbackEligible: true` from the backend's
+history response. Missing or malformed eligibility is shown as Unknown and kept
+blocked; it is not treated as No or recalculated in the browser. If the running
+backend predates rollback support, it must be restarted with the reviewed latest
+code in dry-run mode after approval. Refresh Versions then reloads history and
+updates the selected revision's metadata without weakening validation.
+
+A valid historical ReplicaSet normally has zero ready replicas after scaling
+down; that alone does not disqualify it as a rollback target. Only the currently
+deployed revision must be healthy. Backend validation still requires a clean
+tracked Git working tree on main synchronized with origin/main, even for a
+rollback dry-run. Local implementation changes must be resolved before trying
+a live API dry-run; an enabled button does not bypass those server checks.

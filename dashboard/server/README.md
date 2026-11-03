@@ -61,3 +61,42 @@ the simulated deployment-status test never invokes a real deployment.
 Latest verification: 27 backend tests and 7 browser tests passed, including the
 live GHCR image 210426be6d6da6c2e16f234db410f83a0c98bbd2 dry-run against current
 image 5b6d2c0589ab9e4a6dedbde072a95ccf124921aa. Build and lint passed.
+
+## Explicit GitOps rollback
+
+`POST /api/rollback` accepts the same `{ "tag": "<40-character-lowercase-SHA>" }`
+body, Bearer token, and localhost dashboard Origin as `/api/deploy`. Both routes
+use one operation engine and one process-local lock; a deployment and rollback
+cannot overlap. Rollback is dry-run by default under the same deployment-mode
+environment gate. No automatic rollback or recovery request is submitted.
+
+Choose a previous Kubernetes revision in the dashboard, verify its GHCR image,
+and click Rollback. The confirmation shows the live current image and selected
+target image, plus whether the operation is a dry-run or will push a Git commit.
+The backend independently requires a retained ReplicaSet belonging to the exact
+current Deployment UID, with a revision older than the current revision and an
+immutable SHA image from the expected GHCR repository. It rejects the current
+live or Helm tag, mutable tags, registry-only images, missing history, unavailable
+images, and missing amd64/arm64 support. History and Git are checked again before
+any real write. Only the Helm image.tag changes; a `rollback: update image tag`
+commit is scoped to that file and pushed normally to origin/main.
+
+Jobs include `operation: "rollback"` or `"deploy"`. Poll the existing
+`GET /api/deploy/status/:tag?id=<job-id>` for either operation. Success requires
+Kubernetes readiness and ArgoCD Synced/Healthy at the pushed commit. Failed Git
+operations preserve local work, and convergence timeout is failure rather than
+success. A timeout does not cancel an already pushed GitOps change; inspect
+Git/ArgoCD/Kubernetes before any subsequent manual action.
+
+Retained ReplicaSets are a bounded revision history, not a complete audit proving
+that every earlier rollout was healthy. Kubernetes may prune old revisions. This
+rollback restores an image tag only, not old Helm settings, secrets, external
+state, or database migrations. Image compatibility remains the operator's
+responsibility. Registry SHA tags still depend on publisher immutability. Run
+one backend process and avoid concurrent manual Git edits during an operation.
+
+Rollback tests are fully mocked: `npm test` covers the shared API guards, history,
+Git, locking and timeout behavior. `npm run test:e2e` from dashboard covers the
+confirmation and status UI without invoking the running deployment API. Restart
+the backend in dry-run mode after reviewing local code changes to load the new
+rollback route; editing source does not restart an existing `npm start` process.

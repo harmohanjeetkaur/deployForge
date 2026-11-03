@@ -1,4 +1,6 @@
 import express from 'express';
+import { createOperationRouter } from './operations.js';
+import { buildDeploymentHistory } from './history.js';
 import { verifyImageTag } from './registry.js';
 import cors from 'cors';
 import { execFile } from 'child_process';
@@ -56,6 +58,7 @@ const deployer = createDeployer({
   read: () => readFile(`${PROJECT_ROOT}/${VALUES}`, 'utf8'),
   write: content => writeFile(`${PROJECT_ROOT}/${VALUES}`, content, 'utf8'),
   verify: verifyImageTag,
+  history: getDeploymentHistory,
   live: async () => (await getDeploymentStatus()).currentImage,
   real: REAL_DEPLOYMENT,
   convergence: async (tag, commit) => {
@@ -118,101 +121,13 @@ async function getDeploymentStatus() {
 }
 
 async function getDeploymentHistory() {
-  try {
-    // Get deployment to find current ReplicaSet
-    const deploymentJson = await executeKubectl([
-      'get',
-      'deployment',
-      DEPLOYMENT_NAME,
-      '-n',
-      NAMESPACE,
-      '-o',
-      'json'
-    ]);
-    const deployment = JSON.parse(deploymentJson);
-
-    // Get all ReplicaSets in the namespace
-    const replicaSetsJson = await executeKubectl([
-      'get',
-      'replicasets',
-      '-n',
-      NAMESPACE,
-      '-o',
-      'json'
-    ]);
-    const replicaSetsData = JSON.parse(replicaSetsJson);
-
-    // Filter ReplicaSets owned by this deployment
-    const ownedReplicaSets = replicaSetsData.items.filter(rs => {
-      const ownerRefs = rs.metadata.ownerReferences || [];
-      return ownerRefs.some(ref =>
-        ref.kind === 'Deployment' &&
-        ref.name === DEPLOYMENT_NAME
-      );
-    });
-
-    // Function to compare templates (excluding pod-template-hash)
-    const templatesMatch = (deploymentTemplate, replicaSetTemplate) => {
-      const depLabels = { ...deploymentTemplate.metadata.labels };
-      const rsLabels = { ...replicaSetTemplate.metadata.labels };
-
-      // Remove pod-template-hash from comparison
-      delete depLabels['pod-template-hash'];
-      delete rsLabels['pod-template-hash'];
-
-      const depTemplateForComparison = {
-        metadata: {
-          labels: depLabels,
-          annotations: deploymentTemplate.metadata.annotations || {}
-        },
-        spec: deploymentTemplate.spec
-      };
-
-      const rsTemplateForComparison = {
-        metadata: {
-          labels: rsLabels,
-          annotations: replicaSetTemplate.metadata.annotations || {}
-        },
-        spec: replicaSetTemplate.spec
-      };
-
-      return JSON.stringify(depTemplateForComparison) === JSON.stringify(rsTemplateForComparison);
-    };
-
-    // Build history entries
-    const history = ownedReplicaSets.map(rs => {
-      const revision = rs.metadata.annotations?.['deployment.kubernetes.io/revision'] || 'unknown';
-      const containerImage = rs.spec.template.spec.containers[0]?.image || 'unknown';
-      const creationTimestamp = rs.metadata.creationTimestamp;
-      const desiredReplicas = rs.spec.replicas || 0;
-      const readyReplicas = rs.status.readyReplicas || 0;
-
-      // Compare pod templates to determine current ReplicaSet
-      const isCurrent = templatesMatch(deployment.spec.template, rs.spec.template);
-
-      return {
-        replicaSetName: rs.metadata.name,
-        revision,
-        containerImage,
-        creationTimestamp,
-        desiredReplicas,
-        readyReplicas,
-        isCurrent
-      };
-    });
-
-    // Sort by revision number (descending)
-    history.sort((a, b) => {
-      const revA = parseInt(a.revision) || 0;
-      const revB = parseInt(b.revision) || 0;
-      return revB - revA;
-    });
-
-    return history;
-  } catch (error) {
-    console.error('Error getting deployment history:', error);
-    throw error;
-  }
+  const deployment = JSON.parse(await executeKubectl([
+    'get', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE, '-o', 'json'
+  ]));
+  const replicaSets = JSON.parse(await executeKubectl([
+    'get', 'replicasets', '-n', NAMESPACE, '-o', 'json'
+  ]));
+  return buildDeploymentHistory(deployment, replicaSets.items);
 }
 
 app.get('/api/kubernetes/status', async (req, res) => {
@@ -255,78 +170,7 @@ app.get('/api/images/verify/:tag', async (req, res) => {
   }
 });
 
-app.post('/api/deploy', async (req, res) => {
-  try {
-    // Check deployment token
-    if (!DEPLOY_TOKEN) {
-      return res.status(500).json({
-        error: 'Server configuration error',
-        message: 'Deployment token not configured on server'
-      });
-    }
-
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Deployment token required'
-      });
-    }
-
-    const providedToken = authHeader.substring(7); // Remove 'Bearer ' prefix
-    if (providedToken !== DEPLOY_TOKEN) {
-      console.error('Unauthorized deployment attempt: invalid token');
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Invalid deployment token'
-      });
-    }
-
-    // Server-side Origin check (defense in depth, not authentication)
-    const origin = req.headers.origin;
-    if (origin !== 'http://localhost:5173') {
-      console.error('Rejected deployment request from unexpected origin:', origin);
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Deployment requests are only allowed from the local dashboard'
-      });
-    }
-
-    const { tag } = req.body || {};
-
-    if (!tag) {
-      return res.status(400).json({
-        error: 'Tag is required'
-      });
-    }
-
-    const result = await deployer.request(tag);
-    res.status(result.state === 'failed' ? 400 : result.dryRun ? 200 : 202).json(result);
-  } catch (error) {
-    console.error('Error in /api/deploy:', error);
-    res.status(error.statusCode || 500).json({
-      error: 'Deployment failed',
-      message: error.message
-    });
-  }
-});
-
-app.get('/api/deploy/status/:tag', async (req, res) => {
-  try {
-    const { tag } = req.params;
-    const status = deployer.status;
-    if (!status || status.tag !== tag || (req.query.id && req.query.id !== status.id)) return res.status(404).json({ message: 'Deployment job not found; inspect Git and cluster state before retrying' });
-    res.json(status);
-  } catch (error) {
-    console.error('Error in /api/deploy/status:', error);
-    res.status(500).json({
-      error: 'Failed to check deployment status',
-      message: error.message
-    });
-  }
-});
-
-app.get('/api/deploy/config', (req, res) => res.json({ dryRun: !REAL_DEPLOYMENT }));
+app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, real: REAL_DEPLOYMENT }));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });

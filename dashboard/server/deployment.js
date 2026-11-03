@@ -35,22 +35,48 @@ export function ready(deployment, argo, tag, commit) {
     && argo.status?.operationState?.phase !== 'Running';
 }
 
-export function createDeployer({ git, read, write, verify, live, convergence, real = false,
+// Retained history is authoritative; registry-only images cannot be rollback targets.
+export function isRollbackCandidate(entry, currentImage) {
+  return entry.isCurrent === false
+    && /^[1-9][0-9]*$/.test(String(entry.revision))
+    && /^[1-9][0-9]*$/.test(String(entry.deploymentRevision))
+    && Number.isSafeInteger(Number(entry.revision))
+    && Number.isSafeInteger(Number(entry.deploymentRevision))
+    && Number(entry.revision) < Number(entry.deploymentRevision)
+    && typeof entry.containerImage === 'string'
+    && entry.containerImage.startsWith(`${IMAGE}:`)
+    && /^[a-f0-9]{40}$/.test(entry.containerImage.slice(IMAGE.length + 1))
+    && entry.containerImage !== currentImage;
+}
+
+export function createDeployer({ git, read, write, verify, live, history, convergence, real = false,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), timeout = 300000, now = Date.now }) {
   let active = false;
   let job = null;
   async function run(tag, result) {
     let phase = 'validation';
+    const rollback = result.operation === 'rollback';
+    const label = rollback ? 'Rollback' : 'Deployment';
+    async function validateHistory(currentImage) {
+      if (!rollback) return;
+      if (!history || !(await history()).some(entry => isRollbackCandidate(entry, currentImage) && entry.containerImage === `${IMAGE}:${tag}`)) {
+        throw new Error('Rollback target must be a previous retained deployment revision with a valid GHCR SHA image');
+      }
+    }
     try {
       if (typeof tag !== 'string' || !/^[a-f0-9]{40}$/.test(tag)) throw new Error('Tag must be a 40-character lowercase hexadecimal SHA');
       const image = await verify(tag);
       if (!image.valid || !image.exists || !image.platformsSupported) throw new Error(image.error || 'Image must exist in GHCR with linux/amd64 and linux/arm64');
       const original = await read();
       const currentTag = helmTag(original);
-      if (currentTag === tag || (await live()) === `${IMAGE}:${tag}`) throw new Error('Target image is already deployed or selected in Helm');
+      const currentImage = await live();
+      if (currentTag === tag || currentImage === `${IMAGE}:${tag}`) throw new Error('Target image is already deployed or selected in Helm');
+      await validateHistory(currentImage);
+      Object.assign(result, { currentTag, currentImage });
       const base = await validateGit(git, real);
-      if (!real) return Object.assign(result, { state: 'dry-run', success: true, dryRun: true, currentTag, message: 'Dry run — no files, commits, pushes or Kubernetes resources changed. Remote synchronization checked against cached origin/main.' });
+      if (!real) return Object.assign(result, { state: 'dry-run', success: true, dryRun: true, currentTag, message: `${label} dry run — no files, commits, pushes or Kubernetes resources changed. Remote synchronization checked against cached origin/main.` });
       // Repeat checks just before writing. Never reset, stash, pull or overwrite on failure.
+      if (rollback) await validateHistory(await live());
       if (await validateGit(git) !== base || await read() !== original) throw new Error('Repository changed during validation');
       phase = 'Helm update';
       const updated = helmTag(original, tag);
@@ -58,7 +84,7 @@ export function createDeployer({ git, read, write, verify, live, convergence, re
       phase = 'Git commit';
       if ((await git(['symbolic-ref', '--short', 'HEAD'])).trim() !== 'main' || (await git(['rev-parse', 'HEAD'])).trim() !== base || await read() !== updated) throw new Error('Repository changed before commit');
       // --only excludes unrelated staged paths; never stage the entire repository.
-      await git(['-c', 'core.hooksPath=/dev/null', 'commit', '--only', '-m', `deploy: update image tag to ${tag}`, '--', VALUES]);
+      await git(['-c', 'core.hooksPath=/dev/null', 'commit', '--only', '-m', `${rollback ? 'rollback' : 'deploy'}: update image tag to ${tag}`, '--', VALUES]);
       const commit = (await git(['rev-parse', 'HEAD'])).trim();
       result.commit = commit;
       const paths = (await git(['diff-tree', '--no-commit-id', '--name-only', '-r', commit])).trim();
@@ -76,12 +102,12 @@ export function createDeployer({ git, read, write, verify, live, convergence, re
       let lastError = '';
       while (now() < deadline) {
         try {
-          if (await convergence(tag, commit)) return Object.assign(result, { state: 'succeeded', success: true, message: 'Deployment succeeded: target image ready and ArgoCD Synced/Healthy' });
+          if (await convergence(tag, commit)) return Object.assign(result, { state: 'succeeded', success: true, message: `${label} succeeded: target image ready and ArgoCD Synced/Healthy` });
           lastError = '';
         } catch (error) { lastError = error.message; }
         await sleep(5000);
       }
-      throw new Error(`Timed out waiting for target image and ArgoCD Synced/Healthy${lastError ? `: ${lastError}` : ''}. The pushed change remains; no rollback was performed.`);
+      throw new Error(`Timed out waiting for target image and ArgoCD Synced/Healthy${lastError ? `: ${lastError}` : ''}. The pushed change remains; no automatic rollback was performed.`);
     } catch (error) {
       Object.assign(result, { state: 'failed', success: false, message: `${phase} failed: ${error.message}. Local changes and any commit are preserved; inspect repository state before retrying.` });
     } finally { active = false; }
@@ -89,10 +115,11 @@ export function createDeployer({ git, read, write, verify, live, convergence, re
   }
   return {
     get status() { return job; },
-    async request(tag) {
+    async request(tag, operation = 'deploy') {
+      if (!['deploy', 'rollback'].includes(operation)) throw Object.assign(new Error('Unknown GitOps operation'), { statusCode: 400 });
       if (active) throw Object.assign(new Error('A deployment is already in progress'), { statusCode: 409 });
       active = true;
-      job = { id: crypto.randomUUID(), tag, state: 'requested', dryRun: !real, success: false, message: 'Deployment requested' };
+      job = { id: crypto.randomUUID(), tag, operation, state: 'requested', dryRun: !real, success: false, message: `${operation === 'rollback' ? 'Rollback' : 'Deployment'} requested` };
       if (!real) return await run(tag, job);
       void run(tag, job);
       return { ...job };

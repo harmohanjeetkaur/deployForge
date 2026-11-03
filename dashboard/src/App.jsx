@@ -15,7 +15,10 @@ function App() {
   const [verifying, setVerifying] = useState(false)
   const [currentPage, setCurrentPage] = useState('overview')
   const verificationRequestIdRef = useRef(0)
+  const historyRequestIdRef = useRef(0)
   const [showDeployConfirm, setShowDeployConfirm] = useState(false)
+  const [operation, setOperation] = useState('deploy')
+  const operationLabel = operation === 'rollback' ? 'Rollback' : 'Deployment'
   const [deploying, setDeploying] = useState(false)
   const [deployResult, setDeployResult] = useState(null)
   const [deployError, setDeployError] = useState(null)
@@ -70,18 +73,27 @@ function App() {
   }
 
   async function fetchDeploymentHistory() {
+    const requestId = ++historyRequestIdRef.current
+    setHistoryLoading(true)
     try {
       const response = await fetch('/api/kubernetes/history')
       if (!response.ok) {
         throw new Error('Failed to fetch deployment history')
       }
       const data = await response.json()
+      if (requestId !== historyRequestIdRef.current) return
+      if (!Array.isArray(data)) throw new Error('Invalid deployment history response')
       setHistory(data)
+      // Refresh metadata for the selection rather than retaining a stale history object.
+      setSelectedVersion(selection => {
+        if (!selection || selection.type === 'available') return selection
+        return data.find(entry => entry.revision === selection.revision && entry.containerImage === selection.containerImage) || null
+      })
       setHistoryError(null)
     } catch (err) {
-      setHistoryError(err.message)
+      if (requestId === historyRequestIdRef.current) setHistoryError(err.message)
     } finally {
-      setHistoryLoading(false)
+      if (requestId === historyRequestIdRef.current) setHistoryLoading(false)
     }
   }
 
@@ -137,6 +149,31 @@ function App() {
     const selectedTag = getImageShort(version.containerImage)
     return currentTag === selectedTag
   }
+
+  const commonBlockers = []
+  if (deploying) commonBlockers.push('A GitOps operation is already in progress.')
+  if (dryRun === null) commonBlockers.push('Deployment mode is unavailable.')
+  if (!deployToken.trim()) commonBlockers.push('Enter the deployment token. Authentication is required for dry-runs too.')
+  if (!selectedVersion) commonBlockers.push('Select a version.')
+  if (!k8sData || error) commonBlockers.push('Current Kubernetes status is unavailable.')
+  if (selectedVersion) {
+    const validation = validateImageTag(selectedVersion.containerImage)
+    if (!validation.valid) commonBlockers.push(validation.reason)
+    if (isCurrentlyDeployed(selectedVersion)) commonBlockers.push('This image is already deployed. Select a different image.')
+    if (verifying || !verificationResult?.valid || !verificationResult?.exists || !verificationResult?.platformsSupported) {
+      commonBlockers.push('Verify image availability and both required platforms.')
+    }
+  }
+  let rollbackBlocker = ''
+  if (selectedVersion) {
+    if (historyLoading || historyError) rollbackBlocker = 'Rollback history is unavailable. Refresh versions before continuing.'
+    else if (selectedVersion.type === 'available') rollbackBlocker = 'Rollback requires a previous eligible Kubernetes revision.'
+    else if (typeof selectedVersion.rollbackEligible !== 'boolean') rollbackBlocker = 'Rollback eligibility is unknown: the backend did not provide eligibility metadata. Load the latest backend code in dry-run mode, then refresh versions.'
+    else if (!selectedVersion.rollbackEligible) rollbackBlocker = 'This revision is not eligible for rollback.'
+  }
+  const rollbackEligibilityLabel = typeof selectedVersion?.rollbackEligible !== 'boolean'
+    ? 'Unknown — backend eligibility metadata unavailable'
+    : selectedVersion.rollbackEligible ? 'Yes — verify the image before continuing' : 'No'
 
   const handlePreview = () => {
     setPreviewError(null)
@@ -206,38 +243,20 @@ function App() {
     }
   }
 
-  const handleDeployRequest = () => {
+  const handleDeployRequest = (requestedOperation = 'deploy') => {
     if (!selectedVersion) return
-
-    if (deploying) {
-      setDeployError('Deployment already in progress')
+    if (commonBlockers.length || (requestedOperation === 'rollback' && rollbackBlocker)) {
+      setDeployError(commonBlockers[0] || rollbackBlocker)
       return
     }
 
-    // Prevent deploying the currently deployed image
-    if (isCurrentlyDeployed(selectedVersion)) {
-      setDeployError('This image is already deployed. Select a different version to deploy.')
-      return
-    }
-
-    const validation = validateImageTag(selectedVersion.containerImage)
-    if (!validation.valid) {
-      setDeployError(validation.reason)
-      return
-    }
-
-    // Only allow deployment if image is verified
-    if (!verificationResult || !verificationResult.exists || !verificationResult.platformsSupported) {
-      setDeployError('Please verify the image availability before deploying')
-      return
-    }
-
+    setOperation(requestedOperation)
     setShowDeployConfirm(true)
     setDeployError(null)
   }
 
   const handleConfirmDeploy = async () => {
-    if (!selectedVersion || deploying) return
+    if (!selectedVersion || commonBlockers.length || (operation === 'rollback' && rollbackBlocker)) return
     const requestId = ++deployRequestRef.current
     const controller = new AbortController()
     deployControllerRef.current = controller
@@ -256,9 +275,9 @@ function App() {
     }
     try {
       const tag = getImageShort(selectedVersion.containerImage)
-      let result = await request('/api/deploy', {
+      let result = await request(`/api/${operation}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${deployToken}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${deployToken.trim()}` },
         body: JSON.stringify({ tag })
       })
       while (current()) {
@@ -393,17 +412,28 @@ function App() {
           <>
             <section className="action-buttons">
               <button className="btn btn-primary" disabled>Deploy New Version</button>
-              <button className="btn btn-secondary" disabled>Rollback</button>
+              <button className="btn btn-secondary" onClick={() => handleDeployRequest('rollback')}
+                disabled={commonBlockers.length > 0 || Boolean(rollbackBlocker)} aria-describedby="gitops-requirements rollback-requirements">
+                Rollback
+              </button>
+              <button className="btn btn-secondary" onClick={() => { fetchDeploymentHistory(); fetchKubernetesStatus() }} disabled={historyLoading || deploying || verifying}>
+                Refresh Versions
+              </button>
             </section>
 
             <section className="section">
               <h2>Select Version</h2>
+              <p className="rollback-help">To roll back, select a previous eligible Kubernetes revision, verify its GHCR image, and choose Rollback. A real rollback creates a new Helm tag commit.</p>
               <p className="deployment-mode">{dryRun === null ? 'Deployment mode unavailable' : dryRun ? 'Dry-run mode (default)' : 'Real GitOps deployment enabled'}</p>
               <label>Deployment token (kept in memory only)
                 <input type="password" autoComplete="off" value={deployToken} onChange={e => setDeployToken(e.target.value)} />
               </label>
+              <div id="gitops-requirements" className="operation-requirements">
+                {commonBlockers.length > 0 && <><p>Before Deploy Version or Rollback:</p><ul>{commonBlockers.map(reason => <li key={reason}>{reason}</li>)}</ul></>}
+              </div>
+              <p id="rollback-requirements" className="operation-requirements">{rollbackBlocker}</p>
               <p role="status" aria-live="polite" className={`deployment-phase phase-${deployPhase}`}>
-                {{ idle: 'Ready', requested: 'Deployment requested', 'in-progress': 'Deployment in progress', 'dry-run': 'Dry run complete', succeeded: 'Deployment succeeded', failed: 'Deployment failed' }[deployPhase]}
+                {{ idle: 'Ready', requested: `${operationLabel} requested`, 'in-progress': `${operationLabel} in progress`, 'dry-run': operation === 'rollback' ? 'Rollback dry run complete' : 'Dry run complete', succeeded: `${operationLabel} succeeded`, failed: `${operationLabel} failed` }[deployPhase]}
               </p>
               {historyLoading && <p className="loading-text">Loading available versions...</p>}
               {historyError && <p className="error-text">Failed to load versions: {historyError}</p>}
@@ -437,6 +467,7 @@ function App() {
                         setDeployResult(null)
                         setDeployError(null)
                         setDeployPhase('idle')
+                        setOperation('deploy')
                         setShowDeployConfirm(false)
                         verificationRequestIdRef.current++
                         setVerifying(false)
@@ -479,6 +510,7 @@ function App() {
                             <p><strong>Revision:</strong> {selectedVersion.revision}</p>
                             <p><strong>ReplicaSet:</strong> {selectedVersion.replicaSetName}</p>
                             <p><strong>Status:</strong> {selectedVersion.isCurrent ? 'Current' : 'Previous'}</p>
+                            <p><strong>Rollback eligible:</strong> {rollbackEligibilityLabel}</p>
                             <p><strong>Deployed At:</strong> {formatTimestamp(selectedVersion.creationTimestamp)}</p>
                           </>
                         )}
@@ -512,10 +544,10 @@ function App() {
                       {verificationResult && verificationResult.exists && verificationResult.platformsSupported && (
                         <button
                           className="btn btn-primary preview-btn"
-                          onClick={handleDeployRequest}
-                          disabled={deploying || dryRun === null || !deployToken || isCurrentlyDeployed(selectedVersion)}
+                          onClick={() => handleDeployRequest('deploy')}
+                          disabled={commonBlockers.length > 0} aria-describedby="gitops-requirements"
                         >
-                          {deploying ? 'Deploying...' : 'Deploy Version'}
+                          {deploying ? (operation === 'rollback' ? 'Rolling back...' : 'Deploying...') : 'Deploy Version'}
                         </button>
                       )}
                       {deployError && (
@@ -766,8 +798,8 @@ function App() {
       {showDeployConfirm && selectedVersion && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>Confirm Deployment</h3>
-            <p>Are you sure you want to deploy the following image?</p>
+            <h3>{operation === 'rollback' ? 'Confirm Rollback' : 'Confirm Deployment'}</h3>
+            <p>{operation === 'rollback' ? 'Restore this previously deployed image with a new GitOps commit?' : 'Are you sure you want to deploy the following image?'}</p>
             <div className="deploy-confirm-details">
               <div className="deploy-confirm-row">
                 <span className="deploy-confirm-label">Current Image:</span>
@@ -785,16 +817,15 @@ function App() {
               <button
                 className="btn btn-secondary"
                 onClick={handleCancelDeploy}
-                disabled={deploying || dryRun === null || !deployToken}
               >
                 Cancel
               </button>
               <button
                 className="btn btn-primary"
                 onClick={handleConfirmDeploy}
-                disabled={deploying || dryRun === null || !deployToken}
+                disabled={commonBlockers.length > 0 || (operation === 'rollback' && Boolean(rollbackBlocker))}
               >
-                {deploying ? 'Deploying...' : 'Confirm Deploy'}
+                {deploying ? 'Working...' : operation === 'rollback' ? 'Confirm Rollback' : 'Confirm Deploy'}
               </button>
             </div>
           </div>
