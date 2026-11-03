@@ -35,6 +35,20 @@ export function ready(deployment, argo, tag, commit) {
     && argo.status?.operationState?.phase !== 'Running';
 }
 
+export function convergenceStatus(deployment, argo, tag, commit) {
+  const desired = deployment.spec.replicas ?? 1;
+  const s = deployment.status || {};
+  const target = deployment.spec.template.spec.containers.some(c => c.name === 'deployforge' && c.image === `${IMAGE}:${tag}`);
+  const argoSynced = argo.status?.sync?.status === 'Synced' && argo.status?.sync?.revision === commit;
+  const rolloutReady = target && desired > 0 && s.observedGeneration >= deployment.metadata.generation
+    && s.updatedReplicas === desired && s.readyReplicas === desired && s.availableReplicas === desired && s.replicas === desired;
+  let failure;
+  if (argo.status?.operationState?.syncResult?.revision === commit && ['Failed', 'Error'].includes(argo.status.operationState.phase)) failure = 'ArgoCD synchronization failed for the requested commit';
+  if (argoSynced && argo.status?.health?.status === 'Degraded') failure = 'ArgoCD application health is Degraded for the requested commit';
+  if (target && s.observedGeneration >= deployment.metadata.generation && s.conditions?.some(c => c.type === 'Progressing' && c.status === 'False' && c.reason === 'ProgressDeadlineExceeded')) failure = 'Kubernetes rollout exceeded its progress deadline';
+  return { healthy: ready(deployment, argo, tag, commit), argoSynced, rolloutReady, argoHealth: argo.status?.health?.status || 'Unknown', readyReplicas: s.readyReplicas || 0, desiredReplicas: desired, currentImage: deployment.spec.template.spec.containers.find(c => c.name === 'deployforge')?.image, revision: argo.status?.sync?.revision, failure };
+}
+
 // Retained history is authoritative; registry-only images cannot be rollback targets.
 export function isRollbackCandidate(entry, currentImage) {
   return entry.isCurrent === false
@@ -82,11 +96,14 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       const updated = helmTag(original, tag);
       await write(updated);
       phase = 'Git commit';
+      result.stage = 'gitops-commit';
       if ((await git(['symbolic-ref', '--short', 'HEAD'])).trim() !== 'main' || (await git(['rev-parse', 'HEAD'])).trim() !== base || await read() !== updated) throw new Error('Repository changed before commit');
       // --only excludes unrelated staged paths; never stage the entire repository.
       await git(['-c', 'core.hooksPath=/dev/null', 'commit', '--only', '-m', `${rollback ? 'rollback' : 'deploy'}: update image tag to ${tag}`, '--', VALUES]);
       const commit = (await git(['rev-parse', 'HEAD'])).trim();
       result.commit = commit;
+      result.progress.commitCreated = true;
+      result.state = 'in-progress';
       const paths = (await git(['diff-tree', '--no-commit-id', '--name-only', '-r', commit])).trim();
       if (paths !== VALUES || await read() !== updated
         || (await git(['rev-parse', `${commit}^`])).trim() !== base
@@ -96,20 +113,28 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       phase = 'Git push';
       await git(['push', 'origin', `${commit}:refs/heads/main`]);
       result.state = 'in-progress';
+      result.pushed = true;
+      result.stage = 'argocd-sync';
       result.message = 'GitOps change pushed; waiting for Kubernetes and ArgoCD';
       phase = 'convergence';
       const deadline = now() + timeout;
       let lastError = '';
       while (now() < deadline) {
         try {
-          if (await convergence(tag, commit)) return Object.assign(result, { state: 'succeeded', success: true, message: `${label} succeeded: target image ready and ArgoCD Synced/Healthy` });
+          const observation = await convergence(tag, commit);
+          const status = typeof observation === 'boolean' ? { healthy: observation, argoSynced: observation, rolloutReady: observation } : observation;
+          result.observation = status;
+          Object.assign(result.progress, { argoSynced: Boolean(status.argoSynced), rolloutReady: Boolean(status.rolloutReady), healthy: Boolean(status.healthy) });
+          result.stage = !status.argoSynced ? 'argocd-sync' : !status.rolloutReady ? 'kubernetes-rollout' : 'health-verification';
+          if (status.failure) throw Object.assign(new Error(status.failure), { terminal: true });
+          if (status.healthy) return Object.assign(result, { state: 'succeeded', stage: 'healthy', success: true, message: `${label} succeeded: target image ready and ArgoCD Synced/Healthy` });
           lastError = '';
-        } catch (error) { lastError = error.message; }
+        } catch (error) { if (error.terminal) throw error; lastError = error.message; }
         await sleep(5000);
       }
       throw new Error(`Timed out waiting for target image and ArgoCD Synced/Healthy${lastError ? `: ${lastError}` : ''}. The pushed change remains; no automatic rollback was performed.`);
     } catch (error) {
-      Object.assign(result, { state: 'failed', success: false, message: `${phase} failed: ${error.message}. Local changes and any commit are preserved; inspect repository state before retrying.` });
+      Object.assign(result, { state: 'failed', failureStage: result.stage, stage: 'failed', success: false, message: `${phase} failed: ${error.message}. Local changes and any commit are preserved; inspect repository state before retrying.` });
     } finally { active = false; }
     return result;
   }
@@ -119,7 +144,7 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       if (!['deploy', 'rollback'].includes(operation)) throw Object.assign(new Error('Unknown GitOps operation'), { statusCode: 400 });
       if (active) throw Object.assign(new Error('A deployment is already in progress'), { statusCode: 409 });
       active = true;
-      job = { id: crypto.randomUUID(), tag, operation, state: 'requested', dryRun: !real, success: false, message: `${operation === 'rollback' ? 'Rollback' : 'Deployment'} requested` };
+      job = { id: crypto.randomUUID(), tag, operation, state: 'requested', stage: 'request-accepted', progress: { requestAccepted: true, commitCreated: false, argoSynced: false, rolloutReady: false, healthy: false }, dryRun: !real, success: false, message: `${operation === 'rollback' ? 'Rollback' : 'Deployment'} requested` };
       if (!real) return await run(tag, job);
       void run(tag, job);
       return { ...job };

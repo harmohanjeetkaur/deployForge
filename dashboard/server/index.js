@@ -7,7 +7,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createDeployer, enabled, ready, VALUES } from './deployment.js';
+import { createDeployer, enabled, convergenceStatus, VALUES } from './deployment.js';
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -30,11 +30,12 @@ app.use(express.json());
 
 const NAMESPACE = 'deployforge-gitops';
 const DEPLOYMENT_NAME = 'deployforge';
+const KUBE_CONTEXT = process.env.DEPLOYFORGE_KUBE_CONTEXT || 'docker-desktop';
 const PROJECT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 async function executeKubectl(args) {
   try {
-    const { stdout } = await execFileAsync('kubectl', args, { timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('kubectl', ['--context', KUBE_CONTEXT, ...args], { timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
     return stdout;
   } catch {
     throw new Error('kubectl read failed or timed out; check local context, permissions and resource names');
@@ -64,7 +65,7 @@ const deployer = createDeployer({
   convergence: async (tag, commit) => {
     const deployment = JSON.parse(await executeKubectl(['get', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE, '-o', 'json']));
     const argo = JSON.parse(await executeKubectl(['get', 'application', process.env.DEPLOYFORGE_ARGOCD_APP || 'deployforge', '-n', process.env.DEPLOYFORGE_ARGOCD_NAMESPACE || 'argocd', '-o', 'json']));
-    return ready(deployment, argo, tag, commit);
+    return convergenceStatus(deployment, argo, tag, commit);
   }
 });
 
@@ -170,7 +171,7 @@ app.get('/api/images/verify/:tag', async (req, res) => {
   }
 });
 
-app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, real: REAL_DEPLOYMENT }));
+app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, real: REAL_DEPLOYMENT, environment: KUBE_CONTEXT }));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });

@@ -1,3 +1,4 @@
+import { executionConfig, previewIfAvailable } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
 
 const repo = 'ghcr.io/harmohanjeetkaur/deployforge'
@@ -11,14 +12,14 @@ async function setup(page, { history = [past, { ...past, revision: '5', containe
     const request = route.request()
     const path = new URL(request.url()).pathname
     let json
-    if (path === '/api/deploy/config') json = { dryRun: true }
+    if (path === '/api/deploy/config') json = executionConfig
     else if (path === '/api/kubernetes/status') json = { currentImage: `${repo}:${current}`, desiredReplicas: 3, readyReplicas: 3, pods: [] }
     else if (path === '/api/kubernetes/history') json = history
     else if (path.startsWith('/api/images/verify/')) json = { valid: true, exists: true, platformsSupported: true }
     else if (path === '/api/rollback') {
       expect(request.method()).toBe('POST')
       expect(request.headers().authorization).toBe(`Bearer ${token}`)
-      expect(request.postDataJSON()).toEqual({ tag: previous })
+      expect(request.postDataJSON()).toEqual({ tag: previous, execution: 'real', environment: 'docker-desktop' })
       return post(route)
     } else if (path.startsWith('/api/deploy/status/')) return status(route)
     else throw new Error(`Unexpected API request ${path}`)
@@ -28,27 +29,29 @@ async function setup(page, { history = [past, { ...past, revision: '5', containe
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
   await page.locator('input[type=password]').fill(token)
   await page.locator('#version-select').selectOption('k8s-4')
+  await previewIfAvailable(page)
 }
 async function confirm(page) {
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await expect(page.getByText('✓ Image verified in GHCR', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Rollback', exact: true }).click()
+  await page.getByTestId('rollback-action').click()
   await expect(page.getByRole('heading', { name: 'Confirm Rollback', exact: true })).toBeVisible()
   await expect(page.locator('.deploy-confirm-details')).toContainText(`${repo}:${current}`)
   await expect(page.locator('.deploy-confirm-details')).toContainText(`${repo}:${previous}`)
-  await expect(page.locator('.deploy-confirm-warning')).toHaveText('Dry run: validates only. No files, commits, pushes or Kubernetes changes.')
+  await expect(page.locator('.deploy-confirm-warning')).toContainText('ArgoCD will reconcile')
   await page.getByRole('button', { name: 'Confirm Rollback', exact: true }).click()
 }
 
-test('rollback dry run uses authenticated API, shows both images and resets on selection', async ({ page }) => {
+test('rollback execution uses authenticated API, shows both images and resets on selection', async ({ page }) => {
   let requests = 0
-  await setup(page, { post: route => { requests++; return route.fulfill({ json: { operation: 'rollback', state: 'dry-run', dryRun: true, success: true, currentTag: current, tag: previous, message: 'Rollback dry run' } }) } })
-  await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeDisabled()
+  await setup(page, { post: route => { requests++; return route.fulfill({ json: { operation: 'rollback', state: 'succeeded', progress: { requestAccepted: true, commitCreated: true, argoSynced: true, rolloutReady: true, healthy: true }, stage: 'healthy', pushed: true, commit: 'c'.repeat(40), dryRun: false, success: true, currentTag: current, tag: previous, message: 'Rollback dry run' } }) } })
+  await expect(page.getByTestId('rollback-action')).toBeDisabled()
   await confirm(page)
-  await expect(page.getByRole('status')).toHaveText('Rollback dry run complete')
-  await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeEnabled()
+  await expect(page.getByRole('status')).toHaveText('Rollback healthy')
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(requests).toBe(1)
   await page.locator('#version-select').selectOption('')
+  await previewIfAvailable(page)
   await expect(page.getByRole('status')).toHaveText('Ready')
   await expect(page.locator('.verification-result')).toHaveCount(0)
 })
@@ -60,14 +63,14 @@ test('simulated rollback job displays requested, in progress, then succeeded', a
     status: route => {
       polls++
       return route.fulfill({ json: { operation: 'rollback', id: 'rollback-job', tag: previous, dryRun: false,
-        state: polls === 1 ? 'in-progress' : 'succeeded', message: polls === 1 ? 'Waiting for convergence' : 'Rollback succeeded' } })
+        state: polls === 1 ? 'in-progress' : 'succeeded', progress: { requestAccepted: true, commitCreated: true, argoSynced: true, rolloutReady: polls > 1, healthy: polls > 1 }, stage: polls === 1 ? 'kubernetes-rollout' : 'healthy', success: true, message: polls === 1 ? 'Waiting for convergence' : 'Rollback succeeded' } })
     }
   })
   await confirm(page)
   await expect(page.getByRole('status')).toHaveText('Rollback requested')
   await expect(page.getByRole('status')).toHaveText('Rollback in progress')
-  await expect(page.getByRole('status')).toHaveText('Rollback succeeded')
-  await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeEnabled()
+  await expect(page.getByRole('status')).toHaveText('Rollback healthy')
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(polls).toBe(2)
 })
 
@@ -83,7 +86,12 @@ for (const failure of [
     await confirm(page)
     await expect(page.getByRole('status')).toHaveText('Rollback failed')
     await expect(page.locator('.preview-error')).toContainText(failure.message)
-    await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeEnabled()
+    if (failure.code === 401) {
+      await expect(page.locator('input[type=password]')).toHaveValue('')
+      await expect(page.getByTestId('rollback-action')).toBeDisabled()
+      await page.locator('input[type=password]').fill(token)
+    }
+    await expect(page.getByTestId('rollback-action')).toBeEnabled()
     expect(requests).toBe(1)
   })
 }
@@ -97,7 +105,7 @@ test('rollback convergence timeout shows failure, clears busy state, and never r
   await confirm(page)
   await expect(page.getByRole('status')).toHaveText('Rollback failed')
   await expect(page.locator('.preview-error')).toContainText('Timed out')
-  await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeEnabled()
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(requests).toBe(1)
   expect(polls).toBe(1)
 })
@@ -108,13 +116,14 @@ test('rollback locks both UI actions while pending, discards late results on sel
   const delayed = new Promise(resolve => { release = resolve })
   await setup(page, { post: async route => {
     requests++; received(); await delayed
-    await route.fulfill({ json: { operation: 'rollback', state: 'dry-run', dryRun: true, message: 'Stale rollback result' } }).catch(() => {})
+    await route.fulfill({ json: { operation: 'rollback', state: 'succeeded', progress: { requestAccepted: true, commitCreated: true, argoSynced: true, rolloutReady: true, healthy: true }, stage: 'healthy', pushed: true, commit: 'c'.repeat(40), dryRun: false, message: 'Stale rollback result' } }).catch(() => {})
   } })
   await confirm(page)
   await started
-  await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeDisabled()
+  await expect(page.getByTestId('rollback-action')).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Rolling back...', exact: true })).toBeDisabled()
   await page.locator('#version-select').selectOption('')
+  await previewIfAvailable(page)
   release()
   await expect(page.getByRole('status')).toHaveText('Ready')
   await expect(page.getByText('Stale rollback result', { exact: true })).toHaveCount(0)
@@ -130,7 +139,7 @@ for (const version of [
   test(`rollback disallows invalid/current/unretained target ${version.containerImage} ${version.isCurrent}`, async ({ page }) => {
     await setup(page, { history: [version], post: () => { throw new Error('must not submit rollback') } })
     await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Rollback', exact: true })).toBeDisabled()
+    await expect(page.getByTestId('rollback-action')).toBeDisabled()
     await expect(page.locator('.modal-overlay')).toHaveCount(0)
   })
 }
@@ -138,7 +147,7 @@ for (const version of [
 test('rollback confirmation cancel never submits an operation', async ({ page }) => {
   await setup(page, { post: () => { throw new Error('must not submit rollback') } })
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
-  await page.getByRole('button', { name: 'Rollback', exact: true }).click()
+  await page.getByTestId('rollback-action').click()
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(page.locator('.modal-overlay')).toHaveCount(0)
   await expect(page.getByRole('status')).toHaveText('Ready')

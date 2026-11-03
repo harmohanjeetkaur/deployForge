@@ -1,37 +1,72 @@
 # DeployForge dashboard
 
-React/Vite dashboard and localhost Express API for viewing Kubernetes deployment
-status/history, verifying GHCR image platforms, and preparing GitOps deployments.
-Dry-run is the default. Real deployment remains disabled unless explicitly opted
-in at server startup; see [backend safety and recovery notes](server/README.md).
+A local platform engineering dashboard for GHCR image verification, GitOps
+releases, Kubernetes revision history, and explicit image rollback. The existing
+Go API, Helm chart, CI workflow, and ArgoCD application remain the deployment
+architecture.
 
-## Local setup
+## Run locally
 
-Use Node.js 24 and npm. Install both dependency sets from their lockfiles:
+Use Node.js 24 and npm:
 
 ```sh
 cd dashboard
 npm ci
 npm ci --prefix server
+npm start --prefix server
 ```
 
-Start the backend with `npm start --prefix server` and the frontend with
-`npm run dev` in a separate terminal. Open `http://localhost:5173`. The backend
-binds to `127.0.0.1:3001`; Vite proxies `/api` to it. Deployment requests require
-the localhost dashboard Origin and `DEPLOYFORGE_DEPLOY_TOKEN` configured in the
-backend environment. Enter that token in the dashboard password field; it is
-kept in browser memory only. Environment files are ignored and are not loaded
-automatically by the Express backend. Never use a `VITE_` variable for a secret:
-Vite embeds those values in browser bundles.
+Start `npm run dev` in a second terminal and open `http://localhost:5173`.
+The API binds only to `127.0.0.1:3001`. Vite uses port 5173 strictly and proxies
+to that IPv4 address. Restart the API after changing backend source.
 
-Leave `DEPLOYFORGE_ENABLE_DEPLOY` unset. Dry-run verifies GHCR, the current image,
-and Git state without writing Helm values, committing, pushing, or changing
-Kubernetes resources. Kubernetes views and live validation require a local
-kubectl context with read access to namespace `deployforge-gitops`. Missing
-credentials or connectivity produce errors rather than bypassing validation.
-The server resolves the repository root relative to its source location.
+## Release workflow
 
-## Checks
+Choose a different image candidate or enter a 40-character immutable SHA. Verify
+its real GHCR availability and both linux/amd64 and linux/arm64 platforms, preview
+the image change, supply the operator-provided deployment token, and confirm.
+The normal UI explicitly requests real GitOps execution. It shows an actionable
+configuration error when execution or server authentication is unavailable;
+it never presents a simulation as a successful deployment.
+
+The API updates only Helm image.tag, commits only that values file, and pushes
+normally to origin/main. Progress distinguishes request acceptance, commit
+creation, ArgoCD synchronization, Kubernetes rollout, and final observed health.
+Success requires the target image to be ready and ArgoCD Synced/Healthy at the
+exact pushed commit. A timeout or partial failure is not success and does not
+cancel a pushed change. No automatic rollback or retry is performed.
+
+For rollback, select an eligible retained revision or its Rollback to Revision X
+action, verify the image, preview, and confirm. Rollback creates a new GitOps
+commit; it never directly changes Kubernetes. History is bounded by retained
+ReplicaSets and is not a historical health audit. Image rollback cannot undo
+schema migrations, external state, secrets, or unrelated configuration.
+
+## Operator setup and safety
+
+The backend remains execution-disabled by default. Operators must explicitly
+configure `DEPLOYFORGE_ENABLE_DEPLOY=true` for the API process to accept the
+normal UI's real requests, provide `DEPLOYFORGE_DEPLOY_TOKEN` securely, configure
+Git identity and origin/main push credentials, and supply read access to the
+cluster and ArgoCD application. This repository does not enable that variable.
+
+The target context defaults to docker-desktop and can be configured with
+`DEPLOYFORGE_KUBE_CONTEXT`. Every kubectl read is pinned to that context. The UI
+shows and submits the configured target environment; mismatches are rejected.
+Default namespace/application settings are documented in [server notes](server/README.md).
+
+Tokens are password input, kept only in memory, cleared on authentication failure,
+explicit clearing, and navigation away from Deployments. No secret is embedded in
+Vite variables, logs, browser storage, or tracked environment files. Use a private
+owner-only credential handoff rather than printing a token. Environment files
+are ignored and the Express process does not load them automatically.
+
+Real operations require main synchronized with origin/main and a clean tracked
+working tree. One process-local lock covers deployment and rollback through final
+convergence. Run one API process, avoid concurrent repository edits, and do not
+restart during an operation. Locks and job history do not survive restarts.
+
+## Verification
 
 ```sh
 npm test --prefix server
@@ -40,61 +75,9 @@ npm run build
 npm run test:e2e
 ```
 
-Browser tests use installed Google Chrome. The default suite mocks backend
-responses and skips the opt-in live GHCR/Kubernetes dry-run. See the backend
-README for that test's prerequisites and mutation guards. Running checks does
-not require enabling real deployment.
-
-The repository includes dependency lockfiles, source, tests, and documentation.
-Dependencies, environment/credential files, logs, coverage, browser reports, and
-build output are ignored. The available-image entry is a fixed portfolio example,
-not a live registry listing; security findings shown in the UI are demo data.
-
-## Rollback
-
-On Deployments, choose a previous eligible Kubernetes revision, verify its GHCR
-image, and select Rollback. The confirmation displays current and target images.
-Rollback uses the same authentication, default dry-run protection, Git validation,
-shared operation lock, and ArgoCD/Kubernetes convergence checks as deployment.
-A real rollback creates a new Helm image-tag commit rather than changing
-Kubernetes directly. See [rollback behavior and limitations](server/README.md#explicit-gitops-rollback).
-
-## Disabled deployment and rollback buttons
-
-Authentication is required even for dry-runs. Enter the backend's current token,
-select a different valid SHA image, and verify both GHCR platforms. Dry-run mode
-itself does not disable the buttons. The dashboard lists missing prerequisites.
-
-Rollback also requires an explicit `rollbackEligible: true` from the backend's
-history response. Missing or malformed eligibility is shown as Unknown and kept
-blocked; it is not treated as No or recalculated in the browser. If the running
-backend predates rollback support, it must be restarted with the reviewed latest
-code in dry-run mode after approval. Refresh Versions then reloads history and
-updates the selected revision's metadata without weakening validation.
-
-A valid historical ReplicaSet normally has zero ready replicas after scaling
-down; that alone does not disqualify it as a rollback target. Only the currently
-deployed revision must be healthy. Backend validation still requires a clean
-tracked Git working tree on main synchronized with origin/main, even for a
-rollback dry-run. Local implementation changes must be resolved before trying
-a live API dry-run; an enabled button does not bypass those server checks.
-
-## Choosing a deployment image
-
-Deploy New Version enters deployment selection, clears previous results, and
-selects a different image candidate when one is available. The dropdown includes
-valid SHA images from retained Kubernetes history. For an image not in history,
-enter its 40-character SHA under Image SHA tag and choose Use Image Tag. Candidates
-are not assumed to exist: Verify Image Availability checks GHCR and both required
-platforms before either operation can be confirmed. Preview Version Change works
-for candidate images as well as historical revisions.
-
-Refresh Versions reloads deployment mode, live status, and history metadata. Use
-it or reload the page after updating the backend. No token is fetched from a
-public API or saved in browser storage. The password field remains empty in a new
-browser session until authentication is supplied securely.
-
-Live dry-runs still require a clean tracked Git working tree. Uncommitted UI
-changes intentionally produce a visible validation error rather than silently
-bypassing that requirement. Successful mocked tests do not establish that a live
-API dry-run will pass against an uncommitted working tree.
+Browser tests use installed Google Chrome. Execution-enabled browser/API fixtures
+are simulated and never enable a real backend or run a Git/Kubernetes mutation.
+The original backend dry-run behavior remains available for development tooling
+and the opt-in read-only integration test described in the server notes. It is
+not the normal release UI. Security findings elsewhere in the dashboard remain
+explicitly labeled demo data.

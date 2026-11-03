@@ -1,102 +1,80 @@
-# Local GitOps deployment
+# Local GitOps API
 
-Dry-run is the default. Leave `DEPLOYFORGE_ENABLE_DEPLOY` unset (or set to `false`).
-The only opt-in value for real deployment is the exact string `true`, read at server startup.
-No environment file enables it in this project.
+The server binds to 127.0.0.1:3001, restricts CORS to localhost:5173, and requires
+both the local dashboard Origin and a Bearer token for deployment/rollback POSTs.
+Set `DEPLOYFORGE_DEPLOY_TOKEN` securely in the process environment. Never print
+or commit it. Token comparisons use constant-time comparison for equal lengths.
 
-Run `npm start` in this directory and the Vite dashboard separately. Set
-`DEPLOYFORGE_DEPLOY_TOKEN` in the server environment; enter that same token in the
-dashboard's password field. The browser keeps it in memory only. Server binding
-remains `127.0.0.1:3001`; deployment requests require the localhost:5173 Origin.
+## Normal dashboard requests
 
-Dry-run validates the immutable SHA, public GHCR multi-platform index, Helm image,
-live Kubernetes image, clean tracked Git state, main branch and cached origin/main.
-It does not fetch, write files, commit, push, or poll convergence. Refresh the remote
-tracking branch separately before relying on its synchronization check.
+`POST /api/deploy` and `POST /api/rollback` accept:
 
-When explicitly enabled in a future approved session, the real path fetches
-origin/main, checks synchronization again immediately before editing, updates only
-image.tag in helm/deployforge/values.yaml, commits only that path, and normally
-pushes the exact commit to origin/main. Git hooks are disabled for this scoped
-commit. It never pulls, resets, stashes, force-pushes, or automatically rolls back.
-Failures preserve local files and commits for inspection; a push timeout may mean
-the remote accepted the commit. Inspect remote and local state before retrying.
+```json
+{ "tag": "<40-character-lowercase-SHA>", "execution": "real", "environment": "docker-desktop" }
+```
 
-Real requests return a job ID. The backend holds its process-local lock through
-validation, commit, push and up to five minutes of convergence polling. Read-only
-kubectl requests require the local context to access deployment deployforge in
-namespace deployforge-gitops and the ArgoCD Application. Defaults for the latter
-are name deployforge, namespace argocd; override with DEPLOYFORGE_ARGOCD_APP and
-DEPLOYFORGE_ARGOCD_NAMESPACE. Success requires the target image, observed full
-rollout with all replicas ready/updated/available, and ArgoCD Synced/Healthy at the
-exact pushed commit. No kubectl write or ArgoCD sync command is issued.
+Only the exact server environment value `DEPLOYFORGE_ENABLE_DEPLOY=true` enables
+real execution. The variable remains unset by default. An explicit real request
+against a disabled API returns 503; it never silently returns a successful
+simulation. Enabled APIs require explicit real intent and a matching environment.
+The config endpoint reports execution capability, authentication configuration
+(as a boolean only), and the target context. It never returns credentials.
 
-Jobs and locks are in memory: run one backend instance, avoid concurrent manual
-Git edits, and do not restart it during deployment. A restart loses job tracking
-and cannot cancel a pushed GitOps change. Existing CI can independently advance
-the Helm tag; a normal push rejects conflicts and exact-revision checks avoid
-reporting a different deployment as success. SHA-shaped registry tags rely on
-GHCR publisher discipline (they are not digest-pinned).
+`DEPLOYFORGE_KUBE_CONTEXT` defaults to docker-desktop. All kubectl reads explicitly
+include that context. Deployment/namespace defaults are deployforge and
+deployforge-gitops. `DEPLOYFORGE_ARGOCD_APP` and
+`DEPLOYFORGE_ARGOCD_NAMESPACE` default to deployforge and argocd. The UI confirms
+the target environment; the server independently checks the submitted value.
 
-Run `npm test` for fully mocked validation, dry-run, commit/push failure and
-convergence tests. Tests do not invoke Git, GHCR, or Kubernetes.
+Both operations validate SHA shape, GHCR availability and amd64/arm64 support,
+reject the current live or Helm image, validate a clean tracked main branch,
+fetch and compare origin/main, and recheck immediately before writing. Rollback
+also independently validates retained earlier ReplicaSets owned by the exact
+Deployment UID, twice before writing. Current, mutable, unavailable, foreign,
+or registry-only images cannot be rollback targets.
 
-## Browser and live dry-run verification
+Only Helm values.yaml image.tag changes. Commits use --only for that file and
+verify parent, paths, and content before normal push of the exact commit to
+origin/main. Git hooks are disabled for that scoped commit. The engine never
+pulls, resets, stashes, force-pushes, changes Kubernetes directly, or automatically
+rolls back. A Git failure preserves local work; a push timeout may mean the
+remote accepted the commit, so inspect state before taking another action.
 
-From `dashboard`, run `npm run test:e2e` for browser checks using installed Google
-Chrome. The live test is skipped by default. Run
-`DEPLOYFORGE_LIVE_CHECK=1 npm run test:e2e` to include anonymous GHCR reads,
-read-only Git/Kubernetes checks, and the complete authenticated dry-run through
-the browser. This command requires DEPLOYFORGE_ENABLE_DEPLOY to remain unset;
-the test refuses to run otherwise and never sets or changes it.
+## Status and convergence
 
-The live harness starts a separate API on an ephemeral localhost port and gives
-it a random test-only token. Browser API traffic is routed to that isolated API;
-existing dashboard/server processes are not restarted. A subprocess guard rejects
-every backend command except Git reads and kubectl get. Before/after assertions
-cover the Helm SHA-256, Git HEAD/refs/index/tracked status, and Kubernetes deployment
-spec/generation/resource version. Browser failure/race tests use mocked responses;
-the simulated deployment-status test never invokes a real deployment.
+Poll `GET /api/deploy/status/:tag?id=<job-id>` for either operation. Jobs include
+operation, state, stage, commit, push status, observed readiness, and progress:
+request-accepted → gitops-commit → argocd-sync → kubernetes-rollout →
+health-verification → healthy. A commit alone is not deployment success.
 
-Latest verification: 27 backend tests and 7 browser tests passed, including the
-live GHCR image 210426be6d6da6c2e16f234db410f83a0c98bbd2 dry-run against current
-image 5b6d2c0589ab9e4a6dedbde072a95ccf124921aa. Build and lint passed.
+The engine requires observed Kubernetes generation, the exact target container
+image, all replicas updated/ready/available, and ArgoCD Synced/Healthy at the
+pushed commit. ArgoCD terminal sync errors at that commit, degraded health, rollout
+progress deadlines, and convergence timeout are failures. No recovery request is
+submitted. Pushed desired state remains after failure. Read-only observation can
+continue outside the job to investigate; an operation timeout does not cancel
+ArgoCD reconciliation.
 
-## Explicit GitOps rollback
+One process-local lock covers both operations and stays held through convergence.
+Use a single backend process and avoid concurrent manual Git edits. Jobs and locks
+are in memory. Retained ReplicaSets may be pruned and do not prove that every old
+revision was healthy. SHA tags rely on publisher immutability rather than digest
+pinning. Image rollback does not restore databases or external configuration.
 
-`POST /api/rollback` accepts the same `{ "tag": "<40-character-lowercase-SHA>" }`
-body, Bearer token, and localhost dashboard Origin as `/api/deploy`. Both routes
-use one operation engine and one process-local lock; a deployment and rollback
-cannot overlap. Rollback is dry-run by default under the same deployment-mode
-environment gate. No automatic rollback or recovery request is submitted.
+## Development tooling and tests
 
-Choose a previous Kubernetes revision in the dashboard, verify its GHCR image,
-and click Rollback. The confirmation shows the live current image and selected
-target image, plus whether the operation is a dry-run or will push a Git commit.
-The backend independently requires a retained ReplicaSet belonging to the exact
-current Deployment UID, with a revision older than the current revision and an
-immutable SHA image from the expected GHCR repository. It rejects the current
-live or Helm tag, mutable tags, registry-only images, missing history, unavailable
-images, and missing amd64/arm64 support. History and Git are checked again before
-any real write. Only the Helm image.tag changes; a `rollback: update image tag`
-commit is scoped to that file and pushed normally to origin/main.
+With execution disabled, a tooling POST containing only `{ "tag": "..." }`
+retains the existing backend dry-run: image/current-state/Git validation occurs
+without fetching, editing, committing, pushing, or changing cluster resources.
+Synchronization is checked against cached origin/main. It still requires the
+same authentication and Origin. The normal UI does not use this request form.
 
-Jobs include `operation: "rollback"` or `"deploy"`. Poll the existing
-`GET /api/deploy/status/:tag?id=<job-id>` for either operation. Success requires
-Kubernetes readiness and ArgoCD Synced/Healthy at the pushed commit. Failed Git
-operations preserve local work, and convergence timeout is failure rather than
-success. A timeout does not cancel an already pushed GitOps change; inspect
-Git/ArgoCD/Kubernetes before any subsequent manual action.
-
-Retained ReplicaSets are a bounded revision history, not a complete audit proving
-that every earlier rollout was healthy. Kubernetes may prune old revisions. This
-rollback restores an image tag only, not old Helm settings, secrets, external
-state, or database migrations. Image compatibility remains the operator's
-responsibility. Registry SHA tags still depend on publisher immutability. Run
-one backend process and avoid concurrent manual Git edits during an operation.
-
-Rollback tests are fully mocked: `npm test` covers the shared API guards, history,
-Git, locking and timeout behavior. `npm run test:e2e` from dashboard covers the
-confirmation and status UI without invoking the running deployment API. Restart
-the backend in dry-run mode after reviewing local code changes to load the new
-rollback route; editing source does not restart an existing `npm start` process.
+Run `npm test` here for isolated engine/router/history tests. All Git writes,
+pushes and cluster observations in unit tests are mocked. From dashboard, run
+`npm run test:e2e` for simulated execution-enabled browser tests with Google
+Chrome. Run `DEPLOYFORGE_LIVE_CHECK=1 npm run test:e2e` only with deployment mode
+unset and a clean tracked tree to include read-only GHCR/Kubernetes integration.
+That test uses an ephemeral API and random test-only credential, guards backend
+subprocesses against writes, verifies tooling dry-run behavior, and confirms the
+normal UI refuses unconfigured execution. Existing running services are not
+restarted by the test. No production-changing test runs automatically.

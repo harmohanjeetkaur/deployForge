@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
+import DeploymentWorkspace from './DeploymentWorkspace.jsx'
 
 function App() {
   const [k8sData, setK8sData] = useState(null)
@@ -9,7 +10,6 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState(null)
   const [selectedVersion, setSelectedVersion] = useState(null)
-  const [selectionMode, setSelectionMode] = useState('deploy')
   const [extraImages, setExtraImages] = useState([])
   const [candidateTag, setCandidateTag] = useState('')
   const [candidateError, setCandidateError] = useState(null)
@@ -22,12 +22,13 @@ function App() {
   const historyRequestIdRef = useRef(0)
   const [showDeployConfirm, setShowDeployConfirm] = useState(false)
   const [operation, setOperation] = useState('deploy')
-  const operationLabel = operation === 'rollback' ? 'Rollback' : 'Deployment'
   const [deploying, setDeploying] = useState(false)
   const [deployResult, setDeployResult] = useState(null)
   const [deployError, setDeployError] = useState(null)
   const [deployPhase, setDeployPhase] = useState('idle')
-  const [dryRun, setDryRun] = useState(null)
+  const [backendConfig, setBackendConfig] = useState(null)
+  const executionReady = backendConfig === null ? null : backendConfig.capabilities?.realRequests === true && backendConfig.executionEnabled === true && backendConfig.dryRun === false
+  const submissionLockRef = useRef(false)
   const [deployToken, setDeployToken] = useState('')
   const deployRequestRef = useRef(0)
   const deployControllerRef = useRef(null)
@@ -38,6 +39,11 @@ function App() {
     const requestRef = deployRequestRef
     return () => { requestRef.current++; controllerRef.current?.abort() }
   }, [])
+
+  const navigate = page => {
+    if (page !== 'deployments') { setDeployToken(''); setShowDeployConfirm(false) }
+    setCurrentPage(page)
+  }
 
   // Image candidates are verified against GHCR before either operation.
   const seedImages = [
@@ -65,8 +71,8 @@ function App() {
       if (!response.ok) throw new Error('Deployment mode unavailable')
       const config = await response.json()
       if (typeof config.dryRun !== 'boolean') throw new Error('Invalid deployment configuration')
-      setDryRun(config.dryRun)
-    } catch { setDryRun(null) }
+      setBackendConfig(config)
+    } catch { setBackendConfig(null) }
   }
 
   async function fetchKubernetesStatus() {
@@ -189,7 +195,6 @@ function App() {
     setDeploying(false)
   }
   const handleDeployNewVersion = () => {
-    setSelectionMode('deploy')
     changeSelectedVersion(availableImages.find(image => !isCurrentlyDeployed(image)) || null)
     document.getElementById('version-select')?.focus()
   }
@@ -202,14 +207,15 @@ function App() {
       || { id: `input-${tag}`, containerImage, type: 'available', displayName: tag }
     setExtraImages(images => images.some(image => image.containerImage === containerImage) ? images : [...images, candidate])
     setCandidateError(null)
-    setSelectionMode('deploy')
     changeSelectedVersion(candidate)
   }
 
   const commonBlockers = []
   if (deploying) commonBlockers.push('A GitOps operation is already in progress.')
-  if (dryRun === null) commonBlockers.push('Deployment mode is unavailable.')
-  if (!deployToken.trim()) commonBlockers.push('Enter the deployment token. Authentication is required for dry-runs too.')
+  if (executionReady !== true) commonBlockers.push(executionReady === null ? 'Deployment configuration is unavailable. Refresh the API connection.' : 'GitOps execution is not configured. Ask your platform operator to enable execution on the local API.')
+  if (backendConfig?.authenticationConfigured === false) commonBlockers.push('Configure deployment authentication on the local API.')
+  if (!showPreview) commonBlockers.push('Preview the proposed image change before confirming.')
+  if (!deployToken.trim()) commonBlockers.push('Enter the deployment token to authorize this request.')
   if (!selectedVersion) commonBlockers.push('Select a version.')
   if (!k8sData || error) commonBlockers.push('Current Kubernetes status is unavailable.')
   if (selectedVersion) {
@@ -224,12 +230,12 @@ function App() {
   if (selectedVersion) {
     if (historyLoading || historyError) rollbackBlocker = 'Rollback history is unavailable. Refresh versions before continuing.'
     else if (selectedVersion.type === 'available') rollbackBlocker = 'Rollback requires a previous eligible Kubernetes revision.'
-    else if (typeof selectedVersion.rollbackEligible !== 'boolean') rollbackBlocker = 'Rollback eligibility is unknown: the backend did not provide eligibility metadata. Load the latest backend code in dry-run mode, then refresh versions.'
+    else if (typeof selectedVersion.rollbackEligible !== 'boolean') rollbackBlocker = 'Rollback eligibility is unknown: the backend did not provide eligibility metadata. Load the latest backend code, then refresh versions.'
     else if (!selectedVersion.rollbackEligible) rollbackBlocker = 'This revision is not eligible for rollback.'
   }
   const rollbackEligibilityLabel = typeof selectedVersion?.rollbackEligible !== 'boolean'
     ? 'Unknown — backend eligibility metadata unavailable'
-    : selectedVersion.rollbackEligible ? 'Yes — verify the image before continuing' : 'No'
+    : selectedVersion.rollbackEligible ? verificationResult?.valid && verificationResult?.exists && verificationResult?.platformsSupported ? 'Yes — image verified' : 'Yes — verify the image before continuing' : 'No'
 
   const handlePreview = () => {
     setPreviewError(null)
@@ -305,15 +311,14 @@ function App() {
       setDeployError(commonBlockers[0] || rollbackBlocker)
       return
     }
-
-    setSelectionMode(requestedOperation)
     setOperation(requestedOperation)
     setShowDeployConfirm(true)
     setDeployError(null)
   }
 
   const handleConfirmDeploy = async () => {
-    if (!selectedVersion || commonBlockers.length || (operation === 'rollback' && rollbackBlocker)) return
+    if (submissionLockRef.current || !selectedVersion || commonBlockers.length || (operation === 'rollback' && rollbackBlocker)) return
+    submissionLockRef.current = true
     const requestId = ++deployRequestRef.current
     const controller = new AbortController()
     deployControllerRef.current = controller
@@ -327,7 +332,13 @@ function App() {
     const request = async (url, options = {}) => {
       const response = await fetch(url, { ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]) })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.message || data.error || 'Deployment request failed')
+      if (!response.ok) {
+        if (response.status === 401) setDeployToken('')
+        throw Object.assign(new Error(data.message || data.error || 'Deployment request failed'), { result: data })
+      }
+      if (data.dryRun !== false || data.state === 'dry-run') throw new Error('No deployment was performed. The API returned a simulation instead of executing GitOps. Ask your platform operator to configure execution.')
+      if (data.state === 'succeeded' && (data.success !== true || !data.progress?.healthy || !data.progress?.argoSynced || !data.progress?.rolloutReady)) throw new Error('The API did not confirm deployment health')
+      if (!['requested', 'in-progress', 'succeeded', 'failed'].includes(data.state)) throw new Error('The API returned an unknown deployment state')
       return data
     }
     try {
@@ -335,13 +346,13 @@ function App() {
       let result = await request(`/api/${operation}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${deployToken.trim()}` },
-        body: JSON.stringify({ tag })
+        body: JSON.stringify({ tag, execution: 'real', environment: backendConfig.environment })
       })
       while (current()) {
         setDeployResult(result)
         setDeployPhase(result.state)
         if (result.state === 'failed') throw new Error(result.message)
-        if (['dry-run', 'succeeded'].includes(result.state)) break
+        if (result.state === 'succeeded') break
         if (Date.now() >= deadline) throw new Error('Status polling timed out. The backend may still be deploying; inspect Git and cluster state before retrying.')
         await new Promise((resolve, reject) => {
           const onAbort = () => { clearTimeout(timer); reject(new Error('Status polling stopped')) }
@@ -358,9 +369,11 @@ function App() {
     } catch (err) {
       if (current()) {
         setDeployPhase('failed')
+        if (err.result?.state === 'failed') setDeployResult(err.result)
         setDeployError(`${err.message}${['TimeoutError', 'AbortError'].includes(err.name) ? '. Request outcome is unknown; inspect Git and cluster state before retrying.' : ''}`)
       }
     } finally {
+      submissionLockRef.current = false
       if (current()) setDeploying(false)
     }
   }
@@ -376,11 +389,11 @@ function App() {
           <h2>DeployForge</h2>
         </div>
         <nav className="sidebar-nav">
-          <a href="#" className={`nav-item ${currentPage === 'overview' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); setCurrentPage('overview') }}>Overview</a>
-          <a href="#" className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); setCurrentPage('deployments') }}>Deployments</a>
-          <a href="#" className={`nav-item ${currentPage === 'kubernetes' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); setCurrentPage('kubernetes') }}>Kubernetes</a>
-          <a href="#" className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); setCurrentPage('security') }}>Security</a>
-          <a href="#" className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); setCurrentPage('settings') }}>Settings</a>
+          <a href="#" className={`nav-item ${currentPage === 'overview' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('overview') }}>Overview</a>
+          <a href="#" className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('deployments') }}>Deployments</a>
+          <a href="#" className={`nav-item ${currentPage === 'kubernetes' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('kubernetes') }}>Kubernetes</a>
+          <a href="#" className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('security') }}>Security</a>
+          <a href="#" className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('settings') }}>Settings</a>
         </nav>
       </aside>
 
@@ -465,255 +478,26 @@ function App() {
           </>
         )}
 
-        {currentPage === 'deployments' && (
-          <>
-            <section className="action-buttons">
-              <button className="btn btn-primary" onClick={handleDeployNewVersion} disabled={deploying || verifying} aria-describedby="gitops-requirements">Deploy New Version</button>
-              <button className="btn btn-secondary" onClick={() => handleDeployRequest('rollback')}
-                disabled={commonBlockers.length > 0 || Boolean(rollbackBlocker)} aria-describedby="gitops-requirements rollback-requirements">
-                Rollback
-              </button>
-              <button className="btn btn-secondary" onClick={() => { fetchDeploymentConfig(); fetchDeploymentHistory(); fetchKubernetesStatus() }} disabled={historyLoading || deploying || verifying}>
-                Refresh Versions
-              </button>
-            </section>
-
-            <section className="section">
-              <h2>Select Version</h2>
-              <p className="selection-mode">{selectionMode === 'deploy' ? 'Deployment mode: select and verify a different image.' : 'Rollback mode: confirm a previous eligible revision.'}</p>
-              <div className="image-candidate-input">
-                <label htmlFor="image-sha-input">Image SHA tag</label>
-                <input id="image-sha-input" value={candidateTag} onChange={e => setCandidateTag(e.target.value)} placeholder="40-character image SHA" autoComplete="off" />
-                <button className="btn btn-secondary" onClick={handleUseImageTag} disabled={deploying || verifying}>Use Image Tag</button>
-                {candidateError && <p className="error-text">{candidateError}</p>}
-              </div>
-              <p className="rollback-help">To roll back, select a previous eligible Kubernetes revision, verify its GHCR image, and choose Rollback. A real rollback creates a new Helm tag commit.</p>
-              <p className="deployment-mode">{dryRun === null ? 'Deployment mode unavailable' : dryRun ? 'Dry-run mode (default)' : 'Real GitOps deployment enabled'}</p>
-              <label>Deployment token (kept in memory only)
-                <input type="password" autoComplete="off" value={deployToken} onChange={e => setDeployToken(e.target.value)} />
-              </label>
-              <div id="gitops-requirements" className="operation-requirements">
-                {commonBlockers.length > 0 && <><p>Before Deploy Version or Rollback:</p><ul>{commonBlockers.map(reason => <li key={reason}>{reason}</li>)}</ul></>}
-              </div>
-              <p id="rollback-requirements" className="operation-requirements">{rollbackBlocker}</p>
-              <p role="status" aria-live="polite" className={`deployment-phase phase-${deployPhase}`}>
-                {{ idle: 'Ready', requested: `${operationLabel} requested`, 'in-progress': `${operationLabel} in progress`, 'dry-run': operation === 'rollback' ? 'Rollback dry run complete' : 'Dry run complete', succeeded: `${operationLabel} succeeded`, failed: `${operationLabel} failed` }[deployPhase]}
-              </p>
-              {historyLoading && <p className="loading-text">Loading available versions...</p>}
-              {historyError && <p className="error-text">Failed to load versions: {historyError}</p>}
-              {!historyLoading && !historyError && (!history || history.length === 0) && availableImages.length === 0 && (
-                <p className="loading-text">No versions available</p>
-              )}
-              {(!historyLoading || availableImages.length > 0) && !historyError && (
-                <>
-                  <div className="version-selector">
-                    <label htmlFor="version-select">Select a version:</label>
-                    <select
-                      id="version-select"
-                      value={selectedVersion ? (selectedVersion.type === 'available' ? `ghcr-${selectedVersion.id}` : `k8s-${selectedVersion.revision}`) : ''}
-                      onChange={(e) => {
-                        const value = e.target.value
-                        if (value.startsWith('k8s-')) {
-                          changeSelectedVersion((history || []).find(h => h.revision === value.replace('k8s-', '')) || null)
-                        } else if (value.startsWith('ghcr-')) {
-                          changeSelectedVersion(availableImages.find(img => img.id === value.replace('ghcr-', '')) || null)
-                        } else changeSelectedVersion(null)
-                      }}
-                      className="version-select"
-                    >
-                      <option value="">-- Select a version --</option>
-                      <optgroup label="Kubernetes Revisions">
-                        {history && history.map((entry) => (
-                          <option key={`k8s-${entry.revision}`} value={`k8s-${entry.revision}`}>
-                            Revision {entry.revision} - {getImageShort(entry.containerImage)} ({entry.isCurrent ? 'Current' : 'Previous'})
-                          </option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="GHCR Image Candidates">
-                        {availableImages.map((image) => (
-                          <option key={`ghcr-${image.id}`} value={`ghcr-${image.id}`}>
-                            Image - {image.displayName}{isCurrentlyDeployed(image) ? ' (Current)' : ''}
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                  </div>
-
-                  {selectedVersion && (
-                    <div className="version-details">
-                      <h3>Version Details</h3>
-                      <div className="version-info">
-                        <p><strong>Container Image:</strong> {selectedVersion.containerImage}</p>
-                        {selectedVersion.type === 'available' ? (
-                          <>
-                            <p><strong>Type:</strong> GHCR Image Candidate</p>
-                            <p><strong>Status:</strong> {isCurrentlyDeployed(selectedVersion) ? 'Currently deployed' : 'Verify in GHCR before use'}</p>
-                          </>
-                        ) : (
-                          <>
-                            <p><strong>Revision:</strong> {selectedVersion.revision}</p>
-                            <p><strong>ReplicaSet:</strong> {selectedVersion.replicaSetName}</p>
-                            <p><strong>Status:</strong> {selectedVersion.isCurrent ? 'Current' : 'Previous'}</p>
-                            <p><strong>Rollback eligible:</strong> {rollbackEligibilityLabel}</p>
-                            <p><strong>Deployed At:</strong> {formatTimestamp(selectedVersion.creationTimestamp)}</p>
-                          </>
-                        )}
-                      </div>
-                      {selectedVersion.type === 'available' && (
-                        <div className="version-info">
-                          <p className="version-note">Candidates include retained revisions and supplied SHA tags. Verify availability and both platforms in GHCR before use.</p>
-                        </div>
-                      )}
-                      {selectedVersion.type !== 'available' && !selectedVersion.isCurrent && (
-                        <div className="version-warning">
-                          ⚠️ This version is from a previous deployment. Restoring it would require a GitOps change.
-                        </div>
-                      )}
-                      <button
-                          className="btn btn-secondary preview-btn"
-                          onClick={handlePreview}
-                          disabled={isCurrentlyDeployed(selectedVersion) || !validateImageTag(selectedVersion.containerImage).valid}
-                        >
-                          Preview Version Change
-                      </button>
-                      <button
-                        className="btn btn-secondary preview-btn"
-                        onClick={handleVerifyImage}
-                        disabled={verifying}
-                      >
-                        {verifying ? 'Verifying...' : 'Verify Image Availability'}
-                      </button>
-                      <button
-                          className="btn btn-primary preview-btn"
-                          onClick={() => handleDeployRequest('deploy')}
-                          disabled={commonBlockers.length > 0} aria-describedby="gitops-requirements"
-                        >
-                          {deploying ? (operation === 'rollback' ? 'Rolling back...' : 'Deploying...') : 'Deploy Version'}
-                      </button>
-                      {deployError && (
-                        <div className="preview-error">{deployError}</div>
-                      )}
-                      {deployResult && (
-                        <div className={`verification-result ${deployResult.state === 'failed' ? 'error' : deployResult.state === 'succeeded' ? 'success' : 'warning'}`}>
-                          <strong>⚠️ {deployResult.message}</strong>
-                          {deployResult.dryRun && (
-                            <div className="deploy-status">
-                              <p><strong>Current Image Tag:</strong> {deployResult.currentTag}</p>
-                              <p><strong>Proposed Target Tag:</strong> {deployResult.tag}</p>
-                              <p className="dry-run-note">No files were modified, committed or pushed. Kubernetes was not changed.</p>
-                            </div>
-                          )}
-
-                        </div>
-                      )}
-                      {previewError && (
-                        <div className="preview-error">{previewError}</div>
-                      )}
-                      {verificationResult && (
-                        <div className={`verification-result ${verificationResult.exists && verificationResult.platformsSupported ? 'success' : 'error'}`}>
-                          {verificationResult.valid ? (
-                            <>
-                              {verificationResult.exists ? (
-                                <>
-                                  <strong>✓ Image verified in GHCR</strong>
-                                  {verificationResult.platformsSupported ? (
-                                    <div className="platforms-supported">
-                                      <span className="platform-badge">linux/amd64 ✓</span>
-                                      <span className="platform-badge">linux/arm64 ✓</span>
-                                    </div>
-                                  ) : (
-                                    <div className="platforms-warning">
-                                      ⚠️ Platform support incomplete: {verificationResult.platforms?.join(', ') || 'Unknown'}
-                                    </div>
-                                  )}
-                                  {verificationResult.digest && (
-                                    <div className="digest-info">Digest: {verificationResult.digest.substring(0, 20)}...</div>
-                                  )}
-                                </>
-                              ) : (
-                                <strong>✗ {verificationResult.error || 'Image not found in registry'}</strong>
-                              )}
-                            </>
-                          ) : (
-                            <strong>✗ {verificationResult.error}</strong>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showPreview && selectedVersion && (
-                    <div className="preview-section">
-                      <h3>Deployment Preview</h3>
-                      <div className="preview-banner">
-                        🔍 Preview only — no changes have been made.
-                      </div>
-                      <div className="preview-comparison">
-                        <div className="preview-side current">
-                          <h4>Current</h4>
-                          <p className="preview-image">{k8sData?.currentImage || 'Loading...'}</p>
-                        </div>
-                        <div className="preview-arrow">→</div>
-                        <div className="preview-side target">
-                          <h4>Target</h4>
-                          <p className="preview-image">{selectedVersion.containerImage}</p>
-                          <span className="unverified-label">{verificationResult?.exists && verificationResult?.platformsSupported ? 'Image verified in GHCR for both required platforms' : 'Image availability has not been verified'}</span>
-                        </div>
-                      </div>
-                      <div className="helm-config-preview">
-                        <h4>Helm Configuration Change</h4>
-                        <div className="config-file">helm/deployforge/values.yaml</div>
-                        <div className="config-change">
-                          <span className="config-field">image.tag:</span>
-                          <span className="config-value-old">{getImageShort(k8sData?.currentImage)}</span>
-                          <span className="config-arrow">→</span>
-                          <span className="config-value-new">{getImageShort(selectedVersion.containerImage)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-
-            <section className="section">
-              <h2>Deployment History</h2>
-              {historyLoading && <p className="loading-text">Loading deployment history...</p>}
-              {historyError && <p className="error-text">Failed to load deployment history: {historyError}</p>}
-              {!historyLoading && !historyError && (!history || history.length === 0) && (
-                <p className="loading-text">No deployment history found</p>
-              )}
-              {!historyLoading && !historyError && history && history.length > 0 && (
-                <div className="table-container">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Revision</th>
-                        <th>Status</th>
-                        <th>Deployed At</th>
-                        <th>Image</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.map((entry, index) => (
-                        <tr key={index}>
-                          <td>{entry.revision}</td>
-                          <td>
-                            <span className={`status ${entry.isCurrent ? 'success' : 'warning'}`}>
-                              {entry.isCurrent ? 'Current' : 'Previous'}
-                            </span>
-                          </td>
-                          <td>{formatTimestamp(entry.creationTimestamp)}</td>
-                          <td title={entry.containerImage}>{getImageShort(entry.containerImage)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          </>
-        )}
+        {currentPage === 'deployments' && <DeploymentWorkspace
+          data={k8sData} selected={selectedVersion} images={availableImages}
+          history={history} historyLoading={historyLoading} historyError={historyError}
+          verification={verificationResult} verifying={verifying} busy={deploying}
+          token={deployToken} setToken={setDeployToken} candidateTag={candidateTag}
+          setCandidateTag={setCandidateTag} candidateError={candidateError}
+          operation={operation} phase={deployPhase} result={deployResult} error={deployError}
+          blockers={commonBlockers} rollbackBlocker={rollbackBlocker} eligibility={rollbackEligibilityLabel}
+          preview={showPreview} previewError={previewError} environment={backendConfig?.environment}
+          executionReady={executionReady}
+          onSelect={value => {
+            if (value.startsWith('k8s-')) changeSelectedVersion((history || []).find(h => h.revision === value.replace('k8s-', '')) || null)
+            else if (value.startsWith('ghcr-')) changeSelectedVersion(availableImages.find(img => img.id === value.replace('ghcr-', '')) || null)
+            else changeSelectedVersion(null)
+          }}
+          onRefresh={() => { fetchDeploymentConfig(); fetchDeploymentHistory(); fetchKubernetesStatus() }}
+          onNew={handleDeployNewVersion} onUseTag={handleUseImageTag} onVerify={handleVerifyImage}
+          onPreview={handlePreview} onRequest={handleDeployRequest} formatTimestamp={formatTimestamp}
+          onSelectRollback={entry => { changeSelectedVersion(entry); setOperation('rollback'); document.getElementById('version-select')?.focus() }}
+        />}
 
         {currentPage === 'kubernetes' && (
           <>
@@ -837,7 +621,7 @@ function App() {
 
       {showDeployConfirm && selectedVersion && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal" role="dialog" aria-modal="true" aria-label="Confirm GitOps operation">
             <h3>{operation === 'rollback' ? 'Confirm Rollback' : 'Confirm Deployment'}</h3>
             <p>{operation === 'rollback' ? 'Restore this previously deployed image with a new GitOps commit?' : 'Are you sure you want to deploy the following image?'}</p>
             <div className="deploy-confirm-details">
@@ -851,7 +635,7 @@ function App() {
               </div>
             </div>
             <p className="deploy-confirm-warning">
-              {dryRun === null ? 'Deployment mode unavailable. Reload before continuing.' : dryRun ? 'Dry run: validates only. No files, commits, pushes or Kubernetes changes.' : 'This will update helm/deployforge/values.yaml and push to origin/main. ArgoCD will deploy the new image.'}
+              This will create and push an image-tag commit to origin/main. ArgoCD will reconcile the change to the selected environment. Success requires a healthy rollout.
             </p>
             <div className="modal-actions">
               <button

@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 
-export function createOperationRouter({ deployer, token, real = false }) {
+export function createOperationRouter({ deployer, token, real = false, environment = 'docker-desktop' }) {
   const router = Router();
   for (const operation of ['deploy', 'rollback']) router.post(`/${operation}`, async (req, res) => {
     try {
@@ -21,7 +22,9 @@ export function createOperationRouter({ deployer, token, real = false }) {
       }
 
       const providedToken = authHeader.substring(7); // Remove 'Bearer ' prefix
-      if (providedToken !== token) {
+      const provided = Buffer.from(providedToken);
+      const expected = Buffer.from(token);
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
         console.error('Unauthorized deployment attempt: invalid token');
         return res.status(401).json({
           error: 'Unauthorized',
@@ -45,6 +48,17 @@ export function createOperationRouter({ deployer, token, real = false }) {
         return res.status(400).json({
           error: 'Tag is required'
         });
+      }
+
+      if (real && req.body.execution !== 'real') return res.status(400).json({ message: 'Explicit real execution intent and target environment are required' });
+      if (req.body.execution !== undefined && req.body.execution !== 'real') {
+        return res.status(400).json({ message: 'Unknown execution intent' });
+      }
+      // Tooling can still use the default read-only path. The normal UI explicitly
+      // requests real execution and must never receive a successful simulation.
+      if (req.body.execution === 'real') {
+        if (!real) return res.status(503).json({ message: 'GitOps execution is not enabled. Ask the platform operator to configure deployment execution on the local API.' });
+        if (req.body.environment !== environment) return res.status(400).json({ message: 'Target environment does not match the configured Kubernetes context' });
       }
 
       const result = await deployer.request(tag, operation);
@@ -73,7 +87,10 @@ export function createOperationRouter({ deployer, token, real = false }) {
     }
   });
 
-  router.get('/deploy/config', (req, res) => res.json({ dryRun: !real }));
+  router.get('/deploy/config', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ dryRun: !real, executionEnabled: real, authenticationConfigured: Boolean(token), environment, capabilities: { realRequests: true, rollback: true } });
+  });
 
   return router;
 }

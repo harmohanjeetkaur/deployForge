@@ -724,3 +724,67 @@
 .selection-mode { margin: 12px 0; font-weight: 600; }
 .image-candidate-input { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
 .image-candidate-input input { min-width: 320px; padding: 10px; }
+
+/* Release workspace: scoped to preserve the existing navigation and other pages. */
+.deployments-workspace { max-width: 1260px; margin: 0 auto; color: #172b4d; }
+.workspace-heading, .workspace-actions, .release-card-heading, .verification-bar, .release-actions { display: flex; align-items: center; gap: 12px; }
+.workspace-heading { justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+.workspace-heading h2 { font-size: 28px; letter-spacing: -.6px; margin: 5px 0 8px; }
+.workspace-heading p:not(.eyebrow), .release-hint { color: #64748b; font-size: 13px; line-height: 1.6; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 1.7px; color: #4767d8; }
+.workspace-actions { flex-shrink: 0; }
+.execution-notice { background: #fff8eb; border: 1px solid #ecd8ac; border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; color: #76521a; font-size: 14px; line-height: 1.6; }
+.release-summary { display: grid; grid-template-columns: 1fr 1fr .8fr; gap: 16px; margin-bottom: 24px; }
+.release-summary article { padding: 20px; border: 1px solid #e1e7f0; border-radius: 12px; background: #f8fafd; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.release-summary article span { color: #64748b; font-size: 12px; font-weight: 600; }
+.release-summary article code { font-size: 14px; overflow-wrap: anywhere; }
+.release-summary small { color: #64748b; font-size: 12px; }
+.release-card { background: #fff; border: 1px solid #e1e7f0; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 3px 12px #172b4d04; }
+.release-card-heading { justify-content: space-between; margin-bottom: 18px; }
+.release-card h3 { font-size: 16px; font-weight: 650; }
+.release-pill { display: inline-flex; align-items: center; border-radius: 20px; padding: 5px 10px; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.is-good { background: #eaf7ef; color: #227444; }
+.is-muted { background: #eef2f8; color: #5b6d85; }
+.is-failed { background: #fff0f0; color: #b53939; }
+.release-card label { display: block; color: #43546d; font-size: 12px; font-weight: 650; margin-bottom: 8px; }
+.deployments-workspace .version-select { max-width: 100%; background: #fff; border-color: #d8e0ec; color: #24354c; }
+.image-entry { margin-top: 14px; font-size: 12px; color: #64748b; }
+.image-entry summary { cursor: pointer; padding: 8px 0; }
+.deployments-workspace .version-details { padding: 16px 0 0; border: 0; background: transparent; }
+.version-info code { display: block; overflow-wrap: anywhere; font-size: 12px; margin: 8px 0; }
+.verification-bar { flex-wrap: wrap; margin: 16px 0; }
+.deployments-workspace .platforms-supported { margin: 0; }
+.deployments-workspace .verification-result { overflow-wrap: anywhere; }
+.authorization-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding-bottom: 20px; }
+.token-input { display: flex; gap: 8px; align-items: center; }
+.token-input input { min-width: 0; width: 100%; padding: 11px; border: 1px solid #d8e0ec; border-radius: 6px; }
+.release-actions { flex-wrap: wrap; border-top: 1px solid #edf0f5; padding-top: 20px; }
+.release-actions .preview-btn { margin: 0; }
+.deployments-workspace .btn { padding: 10px 15px; font-size: 12px; font-weight: 600; }
+.deployments-workspace .btn-primary { background: #3c5ed7; }
+.deployments-workspace .btn-secondary { background: #f2f5fa; color: #30435e; }
+.deployments-workspace .operation-requirements { font-size: 12px; }
+.progress-steps { display: grid; grid-template-columns: repeat(5, 1fr); list-style: none; padding: 12px 0; gap: 12px; }
+.progress-steps li { display: flex; flex-direction: column; gap: 9px; color: #94a0b2; font-size: 12px; }
+.progress-steps small { font-size: 11px; }
+.step-marker { display: flex; align-items: center; justify-content: center; border-radius: 50%; width: 28px; height: 28px; border: 1px solid #dfe5ee; background: #f6f8fb; }
+.step-complete { color: #227444 !important; }.step-complete .step-marker { background: #eaf7ef; border-color: #b9dfc8; }
+.step-active { color: #3c5ed7 !important; }.step-active .step-marker { border-color: #3c5ed7; background: #edf1ff; }
+.step-failed { color: #b53939 !important; }.step-failed .step-marker { background: #fff0f0; }
+.commit-reference { font-size: 12px; overflow-wrap: anywhere; margin: 10px 0; }
+.deployments-workspace .table-container { overflow-x: auto; }
+.deployments-workspace .table td { font-size: 12px; }
+.deployments-workspace .table td code { display: block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.history-rollback { border: 0; background: transparent; color: #3c5ed7; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.history-rollback:disabled { color: #94a0b2; cursor: not-allowed; }
+@media (max-width: 1100px) { .workspace-heading { flex-direction: column; gap: 18px; }.release-summary { grid-template-columns: 1fr 1fr; }.authorization-row { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .sidebar { width: 76px; padding: 14px 8px; }.sidebar-header h2 { font-size: 10px; }.sidebar-nav .nav-item { font-size: 10px; padding: 10px 4px; }.main-content { margin-left: 76px; padding: 16px; }.header h1 { font-size: 19px; }.release-summary { grid-template-columns: 1fr; }.release-card { padding: 16px; }.progress-steps { grid-template-columns: 1fr; gap: 14px; }.progress-steps li { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; }.preview-comparison { flex-direction: column; }.image-candidate-input input { min-width: 0; width: 100%; }.token-input { flex-wrap: wrap; }.workspace-actions { flex-wrap: wrap; } }
+.main-content, .deployments-workspace { min-width: 0; }
+.sidebar { top: 0; left: 0; }
+@media (max-width: 760px) {
+  .sidebar { position: fixed; width: 92px; height: 100vh; overflow-x: hidden; }
+  .sidebar-nav .nav-item { font-size: 11px; }
+  .main-content { margin-left: 92px; padding: 12px; }
+  .release-card-heading { flex-wrap: wrap; align-items: flex-start; }
+  .release-card-heading h3 { flex: 1 0 140px; }
+}

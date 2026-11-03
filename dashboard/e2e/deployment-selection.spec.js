@@ -1,3 +1,4 @@
+import { executionConfig, previewIfAvailable, openImageEntry } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
 const repo = 'ghcr.io/harmohanjeetkaur/deployforge'
 const current = '210426be6d6da6c2e16f234db410f83a0c98bbd2'
@@ -8,7 +9,7 @@ async function setup(page, { verificationError, deployError } = {}) {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
     let json
-    if (path === '/api/deploy/config') json = { dryRun: true }
+    if (path === '/api/deploy/config') json = executionConfig
     else if (path === '/api/kubernetes/status') json = { currentImage: `${repo}:${current}`, desiredReplicas: 3, readyReplicas: 3, pods: [] }
     else if (path === '/api/kubernetes/history') json = [{ revision: '5', deploymentRevision: '5', containerImage: `${repo}:${current}`, isCurrent: true, rollbackEligible: false }, { revision: '4', deploymentRevision: '5', containerImage: `${repo}:${previous}`, isCurrent: false, rollbackEligible: true }]
     else if (path.startsWith('/api/images/verify/')) json = verificationError ? { valid: true, exists: false, platformsSupported: false, error: verificationError } : { valid: true, exists: true, platformsSupported: true }
@@ -16,7 +17,7 @@ async function setup(page, { verificationError, deployError } = {}) {
       posts++
       expect(route.request().headers().authorization).toBe('Bearer test-only-token')
       if (deployError) return route.fulfill({ status: 400, json: { message: deployError, state: 'failed' } })
-      json = { operation: 'deploy', state: 'dry-run', dryRun: true, success: true, tag: previous, currentTag: current, message: 'Deployment dry run complete' }
+      json = { operation: 'deploy', state: 'succeeded', progress: { requestAccepted: true, commitCreated: true, argoSynced: true, rolloutReady: true, healthy: true }, stage: 'healthy', pushed: true, commit: 'c'.repeat(40), dryRun: false, success: true, tag: previous, currentTag: current, message: 'Deployment dry run complete' }
     } else throw new Error(`Unexpected API request ${path}`)
     return route.fulfill({ json })
   })
@@ -30,7 +31,7 @@ test('Deploy New Version selects a different history-derived image and preview w
   await page.getByRole('button', { name: 'Refresh Versions', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Refresh Versions', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Deploy New Version', exact: true }).click()
-  await expect(page.getByText('Deployment mode: select and verify a different image.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Deployment mode', { exact: true })).toBeVisible()
   await expect(page.locator('#version-select')).toHaveValue(`ghcr-history-${previous}`)
   await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Preview Version Change', exact: true }).click()
@@ -40,9 +41,10 @@ test('Deploy New Version selects a different history-derived image and preview w
   expect(calls.posts()).toBe(0)
 })
 
-test('selected image verification, authenticated confirmation cancellation and dry-run work', async ({ page }) => {
+test('selected image verification, authenticated confirmation cancellation and execution work', async ({ page }) => {
   const calls = await setup(page)
   await page.locator('#version-select').selectOption(`ghcr-history-${previous}`)
+  await previewIfAvailable(page)
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await expect(page.getByText('✓ Image verified in GHCR', { exact: true })).toBeVisible()
   await page.locator('input[type=password]').fill('test-only-token')
@@ -55,21 +57,27 @@ test('selected image verification, authenticated confirmation cancellation and d
   expect(calls.posts()).toBe(0)
   await page.getByRole('button', { name: 'Deploy Version', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm Deploy', exact: true }).click()
-  await expect(page.getByRole('status')).toHaveText('Dry run complete')
+  await expect(page.getByRole('status')).toHaveText('Deployment healthy')
   expect(calls.posts()).toBe(1)
 })
 
 test('SHA input rejects mutable tags and resets verification for a new candidate', async ({ page }) => {
   await setup(page)
+  await openImageEntry(page)
   await page.locator('#image-sha-input').fill('latest')
   await page.getByRole('button', { name: 'Use Image Tag', exact: true }).click()
+  await previewIfAvailable(page)
   await expect(page.locator('.image-candidate-input .error-text')).toContainText('Mutable tag')
+  await openImageEntry(page)
   await page.locator('#image-sha-input').fill(previous)
   await page.getByRole('button', { name: 'Use Image Tag', exact: true }).click()
+  await previewIfAvailable(page)
   await expect(page.locator('#version-select')).toHaveValue(`ghcr-history-${previous}`)
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
+  await openImageEntry(page)
   await page.locator('#image-sha-input').fill('a'.repeat(40))
   await page.getByRole('button', { name: 'Use Image Tag', exact: true }).click()
+  await previewIfAvailable(page)
   await expect(page.locator('#version-select')).toHaveValue(`ghcr-input-${'a'.repeat(40)}`)
   await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
 })
@@ -77,6 +85,7 @@ test('SHA input rejects mutable tags and resets verification for a new candidate
 test('registry failure details remain visible and prevent deployment', async ({ page }) => {
   const calls = await setup(page, { verificationError: 'Rate limited by registry' })
   await page.locator('#version-select').selectOption(`ghcr-history-${previous}`)
+  await previewIfAvailable(page)
   await page.locator('input[type=password]').fill('test-only-token')
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await expect(page.getByText('✗ Rate limited by registry', { exact: true })).toBeVisible()
@@ -87,6 +96,7 @@ test('registry failure details remain visible and prevent deployment', async ({ 
 test('a current image cannot be previewed or deployed', async ({ page }) => {
   await setup(page)
   await page.locator('#version-select').selectOption('ghcr-ghcr-210426be')
+  await previewIfAvailable(page)
   await expect(page.getByRole('button', { name: 'Preview Version Change', exact: true })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
   await expect(page.locator('#gitops-requirements')).toContainText('This image is already deployed')
@@ -95,6 +105,7 @@ test('a current image cannot be previewed or deployed', async ({ page }) => {
 test('Git validation failure is explicit and restores the action button', async ({ page }) => {
   const calls = await setup(page, { deployError: 'Tracked or staged changes exist. Preserve and resolve them before deploying.' })
   await page.locator('#version-select').selectOption(`ghcr-history-${previous}`)
+  await previewIfAvailable(page)
   await page.locator('input[type=password]').fill('test-only-token')
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await page.getByRole('button', { name: 'Deploy Version', exact: true }).click()
