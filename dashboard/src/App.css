@@ -720,3 +720,7 @@
   margin: 8px 0;
 }
 .operation-requirements ul { padding-left: 20px; }
+
+.selection-mode { margin: 12px 0; font-weight: 600; }
+.image-candidate-input { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.image-candidate-input input { min-width: 320px; padding: 10px; }

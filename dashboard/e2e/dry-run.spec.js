@@ -211,7 +211,7 @@ test('changing version during verification discards old verification response', 
   release()
   await page.locator('#version-select').selectOption('ghcr-ghcr-210426be')
   await expect(page.getByRole('button', { name: 'Verify Image Availability', exact: true })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
 })
 
 test('confirmation cancel sends no deployment request and current image is blocked', async ({ page }) => {

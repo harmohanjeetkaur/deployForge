@@ -78,3 +78,23 @@ deployed revision must be healthy. Backend validation still requires a clean
 tracked Git working tree on main synchronized with origin/main, even for a
 rollback dry-run. Local implementation changes must be resolved before trying
 a live API dry-run; an enabled button does not bypass those server checks.
+
+## Choosing a deployment image
+
+Deploy New Version enters deployment selection, clears previous results, and
+selects a different image candidate when one is available. The dropdown includes
+valid SHA images from retained Kubernetes history. For an image not in history,
+enter its 40-character SHA under Image SHA tag and choose Use Image Tag. Candidates
+are not assumed to exist: Verify Image Availability checks GHCR and both required
+platforms before either operation can be confirmed. Preview Version Change works
+for candidate images as well as historical revisions.
+
+Refresh Versions reloads deployment mode, live status, and history metadata. Use
+it or reload the page after updating the backend. No token is fetched from a
+public API or saved in browser storage. The password field remains empty in a new
+browser session until authentication is supplied securely.
+
+Live dry-runs still require a clean tracked Git working tree. Uncommitted UI
+changes intentionally produce a visible validation error rather than silently
+bypassing that requirement. Successful mocked tests do not establish that a live
+API dry-run will pass against an uncommitted working tree.
