@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test'
 test('live control center displays actual workload and ArgoCD metadata with GET-only navigation', async ({ page }) => {
   test.skip(process.env.DEPLOYFORGE_LIVE_DESIGN !== '1', 'Opt-in GET-only live design verification')
   let posts = 0
-  await page.route('**/api/**', async route => { if (route.request().method() !== 'GET') { posts++; return route.abort() } return route.continue() })
+  await page.route('**/api/**', async route => {
+    if (new URL(route.request().url()).pathname.startsWith('/api/session')) return route.continue(); if (route.request().method() !== 'GET') { posts++; return route.abort() } return route.continue() })
   const response = await page.request.get('/api/kubernetes/status')
   expect(response.status()).toBe(200)
   const live = await response.json()
@@ -24,7 +25,7 @@ test('live control center displays actual workload and ArgoCD metadata with GET-
   await page.getByRole('link', { name: 'Monitoring', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Monitoring backend is not configured')
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('Deployment execution unavailable')
-  await expect(page.getByTestId('rollback-action')).toBeDisabled()
+  await expect(page.getByTestId('execution-status')).toBeVisible()
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(posts).toBe(0)
 })

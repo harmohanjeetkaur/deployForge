@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "authorize": "node authorize-local.js"
   },
   "dependencies": {
     "express": "^4.18.2",

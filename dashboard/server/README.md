@@ -1,7 +1,9 @@
 # Local GitOps API
 
 The server binds to 127.0.0.1:3001, restricts CORS to localhost:5173, and requires
-both the local dashboard Origin and a Bearer token for deployment/rollback POSTs.
+the local dashboard Origin and either an approved local session with CSRF verification
+or a valid operator Bearer credential for deployment/rollback POSTs. Browser
+requests use sessions; no deployment credential is supplied through React.
 Set `DEPLOYFORGE_DEPLOY_TOKEN` securely in the process environment. Never print
 or commit it. Token comparisons use constant-time comparison for equal lengths.
 
@@ -78,3 +80,20 @@ That test uses an ephemeral API and random test-only credential, guards backend
 subprocesses against writes, verifies tooling dry-run behavior, and confirms the
 normal UI refuses unconfigured execution. Existing running services are not
 restarted by the test. No production-changing test runs automatically.
+
+## Local browser sessions
+
+`POST /api/session/request` creates only a pending session. It cannot authorize an
+operation. An operator runs `npm run authorize -- <connection-code>` from this
+server directory, or uses `--prefix dashboard/server` from the repository root.
+The helper reads the existing owner-only private credential and approves that
+specific pending browser; it never returns a browser cookie to the operator.
+
+Cookies contain random 256-bit identifiers, stored hashed on the backend. Cookies
+are HttpOnly, Secure, SameSite=Strict, scoped to `/api`, and have no persistent
+browser expiry. Every session-authorized release POST also requires its CSRF
+header and the exact allowed Origin. Sessions are bounded in memory, expire,
+can be logged out, and disappear on backend restart. Existing bearer tooling,
+execution defaults, Git validation, image verification, and locks are unchanged.
+This assumes a trusted local account and same-origin app; it is not a substitute
+for production multi-user authentication or protection against same-origin XSS.

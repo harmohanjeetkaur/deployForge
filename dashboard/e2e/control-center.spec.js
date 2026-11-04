@@ -1,8 +1,10 @@
+import { handleSession } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
 import { executionConfig } from './ui-fixtures.js'
 const image = `ghcr.io/harmohanjeetkaur/deployforge:${'a'.repeat(40)}`
 async function setup(page, { replicas = 3, failure = false, monitoring = false } = {}) {
   await page.route('**/api/**', route => {
+    if (handleSession(route)) return;
     expect(route.request().method()).toBe('GET')
     const path = new URL(route.request().url()).pathname
     if (path === '/api/deploy/config') return route.fulfill({ json: executionConfig })

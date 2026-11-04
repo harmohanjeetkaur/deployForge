@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import DeploymentWorkspace from './DeploymentWorkspace.jsx'
 import ExecutionStatus from './ExecutionStatus.jsx'
+import LocalSession from './LocalSession.jsx'
+import useLocalSession from './useLocalSession.js'
 import { executionState, validateExecutionConfig } from './execution-state.js'
 import { Overview, KubernetesPage, SecurityPage, MonitoringPage } from './ControlPages.jsx'
 
@@ -16,8 +18,6 @@ function App() {
   const [extraImages, setExtraImages] = useState([])
   const [candidateTag, setCandidateTag] = useState('')
   const [candidateError, setCandidateError] = useState(null)
-  const [showPreview, setShowPreview] = useState(false)
-  const [previewError, setPreviewError] = useState(null)
   const [verificationResult, setVerificationResult] = useState(null)
   const [verifying, setVerifying] = useState(false)
   const [currentPage, setCurrentPage] = useState('overview')
@@ -28,6 +28,7 @@ function App() {
   const [deploying, setDeploying] = useState(false)
   const [deployResult, setDeployResult] = useState(null)
   const [deployError, setDeployError] = useState(null)
+  const [preflightError, setPreflightError] = useState(null)
   const [deployPhase, setDeployPhase] = useState('idle')
   const [backendConfig, setBackendConfig] = useState(null)
   const [configError, setConfigError] = useState(null)
@@ -38,7 +39,7 @@ function App() {
   const execution = executionState(backendConfig, configError)
   const executionReady = execution.ready
   const submissionLockRef = useRef(false)
-  const [deployToken, setDeployToken] = useState('')
+  const { session, refresh: refreshSession, reject: rejectSession, logout: logoutSession } = useLocalSession()
   const deployRequestRef = useRef(0)
   const deployControllerRef = useRef(null)
 
@@ -57,8 +58,9 @@ function App() {
   }, [])
 
   const navigate = page => {
+    setPreflightError(null)
     fetchDeploymentConfig()
-    if (page !== 'deployments') { setDeployToken(''); setShowDeployConfirm(false) }
+    if (page !== 'deployments') setShowDeployConfirm(false)
     setCurrentPage(page)
   }
 
@@ -216,10 +218,10 @@ function App() {
   ].filter((entry, index, images) => images.findIndex(image => image.containerImage === entry.containerImage) === index)
 
   const changeSelectedVersion = version => {
+    if (submissionLockRef.current || deploying) { setPreflightError('A release is already running. Wait for its result before changing versions.'); return false }
     setSelectedVersion(version)
     setVerificationResult(null)
-    setShowPreview(false)
-    setPreviewError(null)
+    setPreflightError(null)
     setDeployResult(null)
     setDeployError(null)
     setDeployPhase('idle')
@@ -251,8 +253,7 @@ function App() {
   if (deploying || ['requested', 'in-progress'].includes(lastOperation?.state)) commonBlockers.push('A GitOps operation is already in progress.')
   if (executionReady !== true) commonBlockers.push(`${execution.label}. Review the backend configuration notice above.`)
   if (backendConfig?.authenticationConfigured === false) commonBlockers.push('Configure deployment authentication on the local API.')
-  if (!showPreview) commonBlockers.push('Preview the proposed image change before confirming.')
-  if (!deployToken.trim()) commonBlockers.push('Authorize Deployment with your token before continuing.')
+  if (session.state !== 'authorized') commonBlockers.push('Connect an approved local browser session in Settings before continuing.')
   if (!selectedVersion) commonBlockers.push('Select a version.')
   if (!k8sData || error) commonBlockers.push('Current Kubernetes status is unavailable.')
   if (selectedVersion) {
@@ -274,30 +275,9 @@ function App() {
     ? 'Unknown — backend eligibility metadata unavailable'
     : selectedVersion.rollbackEligible ? verificationResult?.valid && verificationResult?.exists && verificationResult?.platformsSupported ? 'Yes — image verified' : 'Yes — verify the image before continuing' : 'No'
 
-  const handlePreview = () => {
-    setPreviewError(null)
-
-    if (!selectedVersion) {
-      setPreviewError('Please select a version first')
-      return
-    }
-
-    if (isCurrentlyDeployed(selectedVersion)) {
-      setPreviewError('Cannot preview the currently deployed version')
-      return
-    }
-
-    const validation = validateImageTag(selectedVersion.containerImage)
-    if (!validation.valid) {
-      setPreviewError(validation.reason)
-      return
-    }
-
-    setShowPreview(true)
-  }
-
   const handleVerifyImage = async () => {
-    if (!selectedVersion) return
+    setPreflightError(null)
+    if (!selectedVersion) { setPreflightError('Select an image version first.'); return }
 
     const validation = validateImageTag(selectedVersion.containerImage)
     if (!validation.valid) {
@@ -343,18 +323,19 @@ function App() {
   }
 
   const handleDeployRequest = (requestedOperation = 'deploy') => {
-    if (!selectedVersion) return
     if (commonBlockers.length || (requestedOperation === 'rollback' && rollbackBlocker)) {
-      setDeployError(commonBlockers[0] || rollbackBlocker)
+      setPreflightError(commonBlockers[0] || rollbackBlocker)
       return
     }
+    setPreflightError(null)
     setOperation(requestedOperation)
     setShowDeployConfirm(true)
     setDeployError(null)
   }
 
   const handleConfirmDeploy = async () => {
-    if (submissionLockRef.current || !selectedVersion || commonBlockers.length || (operation === 'rollback' && rollbackBlocker)) return
+    if (submissionLockRef.current) return
+    if (!selectedVersion || commonBlockers.length || (operation === 'rollback' && rollbackBlocker)) { setPreflightError(commonBlockers[0] || rollbackBlocker || 'Select a version first.'); setShowDeployConfirm(false); return }
     submissionLockRef.current = true
     const requestId = ++deployRequestRef.current
     const controller = new AbortController()
@@ -370,7 +351,7 @@ function App() {
       const response = await fetch(url, { ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]) })
       const data = await response.json()
       if (!response.ok) {
-        if (response.status === 401) setDeployToken('')
+        if ([401, 403].includes(response.status)) rejectSession()
         throw Object.assign(new Error(data.message || data.error || 'Deployment request failed'), { result: data, status: response.status })
       }
       if (data.dryRun !== false || data.state === 'dry-run') throw new Error('No deployment was performed. The API returned a simulation instead of executing GitOps. Ask your platform operator to configure execution.')
@@ -382,7 +363,8 @@ function App() {
       const tag = getImageShort(selectedVersion.containerImage)
       let result = await request(`/api/${operation}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${deployToken.trim()}` },
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf },
         body: JSON.stringify({ tag, execution: 'real', environment: backendConfig.environment })
       })
       while (current()) {
@@ -440,7 +422,7 @@ function App() {
 
       <main className="main-content">
         <header className="header">
-          <div><p className="header-breadcrumb">DeployForge / Workspace</p><h1>Platform Control Center</h1></div><div className="environment-chip"><span className="status-dot" />{backendConfig?.environment || 'Environment unavailable'}</div>
+          <div><p className="header-breadcrumb">DeployForge / Workspace</p><h1>Platform Control Center</h1></div><div className="environment-chip"><span className="status-dot" />{backendConfig?.environment || 'Environment unavailable'} · {session.state === 'authorized' ? 'Local session connected' : <button className="text-button" onClick={() => navigate('settings')}>Connect local session</button>}</div>
           {error && <div className="error-badge">Connection Error</div>}
         </header>
 
@@ -450,11 +432,11 @@ function App() {
           data={k8sData} selected={selectedVersion} images={availableImages}
           history={history} historyLoading={historyLoading} historyError={historyError}
           verification={verificationResult} verifying={verifying} busy={deploying}
-          token={deployToken} setToken={setDeployToken} candidateTag={candidateTag}
+          candidateTag={candidateTag}
           setCandidateTag={setCandidateTag} candidateError={candidateError}
           operation={operation} phase={deployPhase} result={deployResult} error={deployError}
           blockers={commonBlockers} rollbackBlocker={rollbackBlocker} eligibility={rollbackEligibilityLabel}
-          preview={showPreview} previewError={previewError} environment={backendConfig?.environment}
+          environment={backendConfig?.environment}
           executionConfig={backendConfig} configError={configError} configCheckedAt={configCheckedAt} onRefreshConfig={fetchDeploymentConfig} lastOperation={lastOperation}
           onSelect={value => {
             if (value.startsWith('k8s-')) changeSelectedVersion((history || []).find(h => h.revision === value.replace('k8s-', '')) || null)
@@ -462,9 +444,13 @@ function App() {
             else changeSelectedVersion(null)
           }}
           onRefresh={() => { fetchDeploymentConfig(); fetchDeploymentHistory(); fetchKubernetesStatus() }}
-          onNew={handleDeployNewVersion} onUseTag={handleUseImageTag} onVerify={handleVerifyImage}
-          onPreview={handlePreview} onRequest={handleDeployRequest} formatTimestamp={formatTimestamp}
-          onSelectRollback={entry => { changeSelectedVersion(entry); setOperation('rollback'); document.getElementById('version-select')?.focus() }}
+          onMode={mode => {
+            if (submissionLockRef.current || deploying) { setPreflightError('A release is already running. Wait for its result before changing operations.'); return }
+            if (mode === 'deploy') handleDeployNewVersion()
+            else { changeSelectedVersion((history || []).find(entry => entry.rollbackEligible === true) || null); setOperation('rollback') }
+          }} preflightError={session.state === 'authorized' && preflightError?.includes('local browser session') ? null : preflightError} onUseTag={handleUseImageTag} onVerify={handleVerifyImage}
+          onRequest={handleDeployRequest} formatTimestamp={formatTimestamp}
+          onSelectRollback={entry => { if (changeSelectedVersion(entry) !== false) { setOperation('rollback'); document.getElementById('version-select')?.focus() } }}
         />}
 
         {currentPage === 'kubernetes' && <KubernetesPage data={k8sData} loading={loading} error={error} config={backendConfig} onRefresh={fetchKubernetesStatus} />}
@@ -474,6 +460,7 @@ function App() {
         {currentPage === 'settings' && (
           <section className="section">
             <h2>Connection Settings</h2>
+            <LocalSession session={session} onRefresh={refreshSession} onLogout={logoutSession} />
             <ExecutionStatus config={backendConfig} error={configError} checkedAt={configCheckedAt} onRefresh={fetchDeploymentConfig} />
             <div className="table-container">
               <table className="table">
@@ -533,7 +520,6 @@ function App() {
               <button
                 className="btn btn-primary"
                 onClick={handleConfirmDeploy}
-                disabled={commonBlockers.length > 0 || (operation === 'rollback' && Boolean(rollbackBlocker))}
               >
                 {deploying ? 'Working...' : operation === 'rollback' ? 'Confirm Rollback' : 'Confirm Deploy'}
               </button>

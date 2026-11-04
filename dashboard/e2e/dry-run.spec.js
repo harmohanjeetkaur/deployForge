@@ -1,4 +1,4 @@
-import { executionConfig, previewIfAvailable } from './ui-fixtures.js'
+import { executionConfig , handleSession } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
 import assert from 'node:assert/strict'
 import { randomUUID, createHash } from 'node:crypto'
@@ -70,10 +70,9 @@ test.afterAll(async () => {
 async function openVersions(page) {
   await page.goto('/')
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Deploy a Version', exact: true })).toBeVisible()
-  await page.locator('input[type=password]').fill(localToken)
+  await expect(page.getByRole('heading', { name: 'Deployments', exact: true })).toBeVisible()
   await page.locator('#version-select').selectOption('ghcr-ghcr-210426be')
-  await previewIfAvailable(page)
+
 }
 async function verifyAndConfirm(page) {
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
@@ -120,6 +119,7 @@ test('live tooling dry-run stays read-only while normal UI refuses unconfigured 
   expect((await call(`/api/deploy/status/${liveCurrent}`)).code).toBe(404)
   expect((await post({ tag: liveTarget, execution: 'real', environment: 'docker-desktop' })).code).toBe(503)
   await page.route('**/api/**', async route => {
+    if (handleSession(route)) return;
     const request = route.request()
     expect(request.method()).toBe('GET')
     const url = new URL(request.url())
@@ -128,14 +128,13 @@ test('live tooling dry-run stays read-only while normal UI refuses unconfigured 
   })
   await page.goto('/')
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
-  await page.locator('input[type=password]').fill(localToken)
   await page.locator('.image-entry summary').click()
   await page.locator('#image-sha-input').fill(liveTarget)
   await page.getByRole('button', { name: 'Use Image Tag', exact: true }).click()
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await expect(page.getByText('✓ Image verified in GHCR', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Preview Version Change', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
+
+  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
   await expect(page.getByRole('alert')).toContainText('Deployment execution unavailable')
   expect(await page.locator('body').innerText()).not.toMatch(/dry[ -]run/i)
   const after = await snapshot()
@@ -146,6 +145,7 @@ test('live tooling dry-run stays read-only while normal UI refuses unconfigured 
 
 async function mockApi(page, deployResponse) {
   await page.route('**/api/**', async route => {
+    if (handleSession(route)) return;
     const url = new URL(route.request().url())
     let body
     if (url.pathname === '/api/deploy/config') body = executionConfig
@@ -166,12 +166,12 @@ test('API error clears Deploying, shows failure, and resets on version change', 
   await expect(page.locator('.preview-error')).toHaveText('Tracked or staged changes exist')
   await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
   await page.locator('#version-select').selectOption('')
-  await previewIfAvailable(page)
+
   await expect(page.getByRole('status')).toHaveText('Ready')
   await expect(page.locator('.preview-error')).toHaveCount(0)
 })
 
-test('changing version during request discards late results and clears busy state', async ({ page }) => {
+test('pending deployment keeps tracking its result and rejects version changes', async ({ page }) => {
   let received, release
   const started = new Promise(resolve => { received = resolve })
   const delayed = new Promise(resolve => { release = resolve })
@@ -185,12 +185,14 @@ test('changing version during request discards late results and clears busy stat
   await started
   await expect(page.getByRole('status')).toHaveText('Submitting request')
   await page.locator('#version-select').selectOption('')
-  await previewIfAvailable(page)
+
+  await expect(page.locator('#version-select')).toHaveValue('ghcr-ghcr-210426be')
+  await expect(page.locator('.workflow-error')).toContainText('already running')
   release()
-  await expect(page.getByRole('status')).toHaveText('Ready')
+  await expect(page.getByRole('status')).toHaveText('Deployment healthy')
   await expect(page.getByText('Stale result', { exact: true })).toHaveCount(0)
   await page.locator('#version-select').selectOption('ghcr-ghcr-210426be')
-  await previewIfAvailable(page)
+
   await expect(page.getByRole('button', { name: 'Verify Image Availability', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Deploying...', exact: true })).toHaveCount(0)
 })
@@ -209,12 +211,12 @@ test('changing version during verification discards old verification response', 
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await started
   await page.locator('#version-select').selectOption('')
-  await previewIfAvailable(page)
+
   release()
   await page.locator('#version-select').selectOption('ghcr-ghcr-210426be')
-  await previewIfAvailable(page)
+
   await expect(page.getByRole('button', { name: 'Verify Image Availability', exact: true })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
 })
 
 test('confirmation cancel sends no deployment request and current image is blocked', async ({ page }) => {
@@ -227,10 +229,11 @@ test('confirmation cancel sends no deployment request and current image is block
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(page.locator('.modal-overlay')).toHaveCount(0)
   expect(requests).toBe(0)
+  await page.getByRole('button', { name: 'Roll back a version', exact: true }).click()
   await page.locator('#version-select').selectOption('k8s-4')
-  await previewIfAvailable(page)
+
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
-  await expect(page.getByTestId('rollback-action')).toBeDisabled()
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(requests).toBe(0)
 })
 

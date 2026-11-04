@@ -1,3 +1,4 @@
+import { handleSession } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
 import { executionConfig } from './ui-fixtures.js'
 const status = { currentImage: `ghcr.io/harmohanjeetkaur/deployforge:${'a'.repeat(40)}`, pods: [], desiredReplicas: 3, readyReplicas: 3 }
@@ -5,6 +6,7 @@ async function setup(page) {
   let config = { ...executionConfig, executionEnabled: false, dryRun: true }
   let unavailable = false
   await page.route('**/api/**', route => {
+    if (handleSession(route)) return;
     expect(route.request().method()).toBe('GET')
     const path = new URL(route.request().url()).pathname
     if (path === '/api/deploy/config') return route.fulfill({ status: unavailable ? 503 : 200, json: unavailable ? {} : config })
@@ -63,7 +65,7 @@ test('contradictory flags and incompatible capabilities cannot advertise real ex
   backend.configure({ ...executionConfig, capabilities: {} })
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
   await expect(badge(page)).toHaveAttribute('data-state', 'unsupported')
-  await expect(page.getByTestId('rollback-action')).toBeDisabled()
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
 })
 test('superseded configuration response cannot restore stale enabled state', async ({ page }) => {
   await setup(page)
@@ -87,6 +89,7 @@ test('live configuration agrees through Vite and across all three pages on deskt
   test.skip(process.env.DEPLOYFORGE_READ_ONLY_CONFIG !== '1', 'Opt-in GET-only live configuration audit')
   let prohibited = 0
   await page.route('**/api/**', route => {
+    if (new URL(route.request().url()).pathname.startsWith('/api/session')) return route.continue();
     if (route.request().method() !== 'GET') { prohibited++; return route.abort() }
     return route.continue()
   })

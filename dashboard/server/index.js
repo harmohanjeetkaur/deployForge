@@ -1,4 +1,5 @@
 import express from 'express';
+import { createLocalSessions } from './local-session.js';
 import { argoSummary } from './cluster-view.js';
 import { createOperationRouter } from './operations.js';
 import { buildDeploymentHistory } from './history.js';
@@ -183,7 +184,9 @@ app.get('/api/images/verify/:tag', async (req, res) => {
   }
 });
 
-app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, real: REAL_DEPLOYMENT, environment: KUBE_CONTEXT }));
+const sessions = createLocalSessions({ token: DEPLOY_TOKEN });
+app.use('/api', sessions.router);
+app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, sessions, real: REAL_DEPLOYMENT, environment: KUBE_CONTEXT }));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });

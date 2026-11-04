@@ -23,8 +23,8 @@ to that IPv4 address. Restart the API after changing backend source.
 ## Release workflow
 
 Choose a different image candidate or enter a 40-character immutable SHA. Verify
-its real GHCR availability and both linux/amd64 and linux/arm64 platforms, preview
-the image change, supply the operator-provided deployment token, and confirm.
+its real GHCR availability and both linux/amd64 and linux/arm64 platforms. Click
+Deploy Version or Rollback to review the current and target images, then confirm. A local browser session handles authorization automatically.
 The normal UI explicitly requests real GitOps execution. It shows an actionable
 configuration error when execution or server authentication is unavailable;
 it never presents a simulation as a successful deployment.
@@ -55,11 +55,22 @@ The target context defaults to docker-desktop and can be configured with
 shows and submits the configured target environment; mismatches are rejected.
 Default namespace/application settings are documented in [server notes](server/README.md).
 
-Tokens are password input, kept only in memory, cleared on authentication failure,
-explicit clearing, and navigation away from Deployments. No secret is embedded in
-Vite variables, logs, browser storage, or tracked environment files. Use a private
-owner-only credential handoff rather than printing a token. Environment files
-are ignored and the Express process does not load them automatically.
+The browser uses a short-lived HttpOnly, Secure, SameSite=Strict session cookie.
+There is no deployment credential input and no credential in React, localStorage,
+or sessionStorage. Approve a new browser once in a trusted local terminal using
+the nonsecret connection code in Settings:
+
+```sh
+npm run authorize --prefix dashboard/server -- <browser-connection-code>
+```
+
+The helper reads `~/.deployforge-secrets/deploy-token` privately (0600, directory
+0700). It never prints the credential or puts it in command arguments. Approval
+expires after two minutes; approved sessions have a two-hour maximum and expire
+after thirty minutes without an authorized operation. Backend restart invalidates
+all sessions. Logout is available in Settings. Use `http://localhost:5173` so
+Chrome accepts the Secure localhost cookie. This setup is local-only, not remote
+multi-user authentication. Environment files remain ignored.
 
 Real operations require main synchronized with origin/main and a clean tracked
 working tree. One process-local lock covers deployment and rollback through final
@@ -85,13 +96,15 @@ not the normal release UI. Security findings are explicitly unavailable until a 
 
 Deployment readiness is read from the local API on entry, every ten seconds, and
 when the window gains focus. Failed configuration requests disable execution.
-A token provided in the compact **Authorize Deployment** section stays in React
-memory and clears on navigation or an HTTP 401 authentication rejection. Entering a
-token does not prove authorization: the server validates it at submission.
+A local session survives page navigation. HTTP 401/403 rejects the session in the
+UI and displays an authorization error, not a failed rollout. Only a trusted
+operator holding the private credential can approve a pending browser.
 
 Select a GHCR candidate for **Deploy Version**, or a retained Kubernetes revision
-for **Rollback to Revision X**. Verification, preview, authorization, and confirmation
-remain mandatory. Disabled reasons appear next to the action.
+for **Rollback to Revision X**. Verification, authorization, and confirmation remain mandatory. The primary
+action opens the change review; there is no separate preview prerequisite.
+Buttons stay clickable and explain missing prerequisites inline before any request
+is submitted. A running release cannot be interrupted by changing the selection.
 
 The API configuration includes `latestOperation` from the current backend process.
 The UI also supports older backends through their existing image-tag status route.
@@ -101,15 +114,16 @@ No persistence has been added. If durable history is required, a separately appr
 minimal append-only operation journal with restricted permissions and no credentials
 would be a possible next step.
 
-GET-only live browser verification (confirmation is always cancelled):
+Live session verification (only session setup writes; release confirmations are cancelled):
 
 ```sh
 DEPLOYFORGE_READ_ONLY_UI=1 npm run test:e2e --prefix dashboard -- live-readiness.spec.js
 ```
 
-This test requires an already execution-enabled backend with the verified rollback
-operation still retained in process memory; it never enables execution. It reads the
-existing private credential into memory. Every non-GET API request is blocked by the test.
+This test requires an already execution-enabled backend. It pairs a fresh browser
+using the trusted helper, checks real image verification, and cancels both release
+confirmations. All deployment and rollback POSTs are blocked; only authentication
+setup may write session state. The test never enables execution.
 
 ### Platform control center
 
@@ -135,7 +149,7 @@ Read-only live visual verification:
 DEPLOYFORGE_LIVE_DESIGN=1 npm run test:e2e --prefix dashboard -- live-design.spec.js
 ```
 
-The test blocks non-GET API requests and captures desktop/mobile screenshots under
+The test permits session setup but blocks other non-GET API requests and captures desktop/mobile screenshots under
 `/private/tmp/deployforge-control-*.png`. It does not submit a release operation.
 
 ### Execution configuration consistency (Step 1)
@@ -160,3 +174,14 @@ DEPLOYFORGE_READ_ONLY_CONFIG=1 npm run test:e2e --prefix dashboard -- execution-
 ```
 
 Enabled and disabled transitions are tested with fixtures, not live operations.
+
+### Simplified release controls
+
+Choose **Deploy a version** or **Roll back a version**, select the image/revision,
+verify GHCR availability, then click **Deploy Version** or **Rollback**. The action
+opens a review dialog; only its confirmation can submit the request. Current and
+target images are shown in that dialog. Progress and revision history remain below.
+No token entry or separate review card is present. All buttons are interactive;
+validation, authorization, and duplicate-submission guards remain enforced by
+handlers and the backend. Missing prerequisites produce an inline explanation.
+The running backend mode is reported accurately; this UI does not enable execution.

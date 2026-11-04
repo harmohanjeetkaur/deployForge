@@ -56,21 +56,18 @@ Verify `/health` returns 200 and `/api/deploy/config` reports `dryRun:false`,
 
 ## Browser authorization without manual copying
 
-A normal React page cannot securely read the private credential file itself.
-For a controlled test, approved browser automation can read that file in memory,
-fill the existing masked input, and click the actual React controls. Keep traces,
-video, header logging, and storage-state exports off. Remain on Deployments for
-both operations; the token stays in React memory and is cleared by navigation.
-This avoids manual copying and does not bypass the API or its authorization.
+Open Settings and approve the displayed browser connection code once:
 
-A permanent tokenless UI requires a separately approved authentication change.
-The proposed minimal design is a short-lived, server-side local session, paired
-once through a trusted terminal helper using the existing private credential.
-An HttpOnly, SameSite=Strict cookie, exact Origin validation, CSRF protection,
-explicit expiry, logout, and loopback-only bindings would be required. Merely
-visiting localhost must not create an authorized session. This protects the
-local workflow but is not a multi-user or remote authentication solution; a
-compromised local account or same-origin script remains a threat.
+```sh
+npm run authorize --prefix dashboard/server -- <connection-code>
+```
+
+The trusted helper reads the private credential in memory. The browser receives
+an HttpOnly, Secure, SameSite=Strict session cookie and uses a CSRF header for
+release requests. There is no token input, copy/paste, or browser token storage.
+Approved sessions survive navigation, expire automatically, and are invalidated
+by backend restart. Keep traces, video, and storage-state exports disabled when
+capturing live tests. The release dialogs and all GitOps safeguards remain.
 
 ## Exactly one controlled cycle, after explicit execution approval
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 
-export function createOperationRouter({ deployer, token, real = false, environment = 'docker-desktop' }) {
+export function createOperationRouter({ deployer, token, real = false, environment = 'docker-desktop', sessions }) {
   const router = Router();
   for (const operation of ['deploy', 'rollback']) router.post(`/${operation}`, async (req, res) => {
     try {
@@ -14,6 +14,10 @@ export function createOperationRouter({ deployer, token, real = false, environme
       }
 
       const authHeader = req.headers.authorization;
+      if (!authHeader && sessions) {
+        const rejected = sessions.authorize(req);
+        if (rejected) return res.status(rejected.status).json({ error: 'Unauthorized', message: rejected.message });
+      } else {
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({
           error: 'Unauthorized',
@@ -30,6 +34,8 @@ export function createOperationRouter({ deployer, token, real = false, environme
           error: 'Unauthorized',
           message: 'Invalid deployment token'
         });
+      }
+
       }
 
       // Server-side Origin check (defense in depth, not authentication)
@@ -89,7 +95,7 @@ export function createOperationRouter({ deployer, token, real = false, environme
 
   router.get('/deploy/config', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ dryRun: !real, executionEnabled: real, authenticationConfigured: Boolean(token), environment, capabilities: { realRequests: true, rollback: true }, latestOperation: deployer.status || null });
+    res.json({ dryRun: !real, executionEnabled: real, authenticationConfigured: Boolean(token), environment, capabilities: { realRequests: true, rollback: true, localSession: Boolean(sessions) }, latestOperation: deployer.status || null });
   });
 
   return router;

@@ -1,3 +1,5 @@
+import { refreshSessionFixture } from './ui-fixtures.js'
+import { handleSession } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
 import { executionConfig } from './ui-fixtures.js'
 const repo = 'ghcr.io/harmohanjeetkaur/deployforge'
@@ -7,6 +9,7 @@ const healthy = { id: 'real-intent-job', operation: 'deploy', tag: target, dryRu
 async function setup(page, { config = executionConfig, post = route => route.fulfill({ json: healthy }), status } = {}) {
   let requests = 0
   await page.route('**/api/**', async route => {
+    if (handleSession(route)) return;
     const path = new URL(route.request().url()).pathname
     let json
     if (path === '/api/deploy/config') json = config
@@ -24,31 +27,33 @@ async function setup(page, { config = executionConfig, post = route => route.ful
   await page.goto('/')
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
   await page.locator('#version-select').selectOption(`ghcr-history-${target}`)
-  await page.locator('input[type=password]').fill('test-only-token')
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await expect(page.getByText('✓ Image verified in GHCR', { exact: true })).toBeVisible()
   return { count: () => requests }
 }
 async function confirm(page, operation = 'deploy') {
-  await page.getByRole('button', { name: 'Preview Version Change', exact: true }).click()
+
   await (operation === 'deploy' ? page.getByRole('button', { name: 'Deploy Version', exact: true }) : page.getByTestId('rollback-action')).click()
   await page.getByRole('button', { name: operation === 'deploy' ? 'Confirm Deploy' : 'Confirm Rollback', exact: true }).click()
 }
 
 test('normal UI hides simulation language and fails closed with actionable setup guidance', async ({ page }) => {
   const requests = await setup(page, { config: { ...executionConfig, dryRun: true, executionEnabled: false } })
-  await page.getByRole('button', { name: 'Preview Version Change', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
-  await expect(page.getByRole('alert')).toContainText('Ask your platform operator')
+
+  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
+  await page.getByTestId('rollback-action').click()
+  await expect(page.locator('.workflow-error')).toContainText('Real execution disabled')
   expect(await page.locator('body').innerText()).not.toMatch(/dry[ -]run/i)
   expect(requests.count()).toBe(0)
 })
-test('preview is required even with a verified image and authentication', async ({ page }) => {
-  await setup(page)
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
-  await expect(page.locator('#gitops-requirements')).toContainText('Preview the proposed image change')
-  await page.getByRole('button', { name: 'Preview Version Change', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
+test('the primary action opens the change review; only confirmation executes', async ({ page }) => {
+  const calls = await setup(page)
+  await page.getByTestId('rollback-action').click()
+  await expect(page.locator('.deploy-confirm-details')).toContainText(current)
+  await expect(page.locator('.deploy-confirm-details')).toContainText(target)
+  expect(calls.count()).toBe(0)
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect(calls.count()).toBe(0)
 })
 test('a simulation response never becomes deployment success', async ({ page }) => {
   const calls = await setup(page, { post: route => route.fulfill({ json: { state: 'dry-run', dryRun: true, success: true, message: 'Dry run successful' } }) })
@@ -67,9 +72,9 @@ test('missing rollout health proof never becomes success', async ({ page }) => {
 test('authentication failure clears credentials and allows recovery without weakening checks', async ({ page }) => {
   const calls = await setup(page, { post: (route, count) => count === 1 ? route.fulfill({ status: 401, json: { message: 'Invalid deployment token' } }) : route.fulfill({ json: healthy }) })
   await confirm(page)
-  await expect(page.locator('input[type=password]')).toHaveValue('')
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
-  await page.locator('input[type=password]').fill('test-only-token')
+  await expect(page.locator('input[type=password]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
+  await refreshSessionFixture(page, true)
   await page.getByRole('button', { name: 'Deploy Version', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm Deploy', exact: true }).click()
   await expect(page.getByRole('status')).toHaveText('Deployment healthy')
@@ -99,7 +104,7 @@ test('progress separates commit, synchronization, rollout and final observed hea
 test('history rollback action selects the revision and still requires verification, preview and confirmation', async ({ page }) => {
   const calls = await setup(page, { post: route => route.fulfill({ json: { ...healthy, operation: 'rollback' } }) })
   await page.getByRole('button', { name: 'Select revision 4 for rollback', exact: true }).click()
-  await expect(page.getByTestId('rollback-action')).toHaveText('Rollback to Revision 4')
+  await expect(page.getByTestId('rollback-action')).toHaveText('Rollback')
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await confirm(page, 'rollback')
   await expect(page.getByRole('status')).toHaveText('Rollback healthy')
@@ -107,17 +112,17 @@ test('history rollback action selects the revision and still requires verificati
 })
 test('duplicate confirmation cannot create two submissions', async ({ page }) => {
   const calls = await setup(page)
-  await page.getByRole('button', { name: 'Preview Version Change', exact: true }).click()
+
   await page.getByRole('button', { name: 'Deploy Version', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm Deploy', exact: true }).evaluate(element => { element.click(); element.click() })
   await expect(page.getByRole('status')).toHaveText('Deployment healthy')
   expect(calls.count()).toBe(1)
 })
-test('credentials are memory-only and cleared on navigation', async ({ page }) => {
+test('sessions survive navigation without credentials in browser storage', async ({ page }) => {
   await setup(page)
   await page.getByRole('link', { name: 'Overview', exact: true }).click()
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
-  await expect(page.locator('input[type=password]')).toHaveValue('')
+  await expect(page.locator('input[type=password]')).toHaveCount(0)
   expect(await page.evaluate(() => Object.keys(localStorage).length + Object.keys(sessionStorage).length)).toBe(0)
 })
 
