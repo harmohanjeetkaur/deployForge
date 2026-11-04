@@ -84,7 +84,7 @@ for (const failure of [
     let requests = 0
     await setup(page, { post: route => { requests++; return route.fulfill({ status: failure.code, json: { state: 'failed', message: failure.message } }) } })
     await confirm(page)
-    await expect(page.getByRole('status')).toHaveText('Rollback failed')
+    await expect(page.getByRole('status')).toHaveText(failure.code === 401 ? 'Authorization required' : 'Rollback failed')
     await expect(page.locator('.preview-error')).toContainText(failure.message)
     if (failure.code === 401) {
       await expect(page.locator('input[type=password]')).toHaveValue('')

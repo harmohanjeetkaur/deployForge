@@ -89,7 +89,7 @@ export function createOperationRouter({ deployer, token, real = false, environme
 
   router.get('/deploy/config', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ dryRun: !real, executionEnabled: real, authenticationConfigured: Boolean(token), environment, capabilities: { realRequests: true, rollback: true } });
+    res.json({ dryRun: !real, executionEnabled: real, authenticationConfigured: Boolean(token), environment, capabilities: { realRequests: true, rollback: true }, latestOperation: deployer.status || null });
   });
 
   return router;

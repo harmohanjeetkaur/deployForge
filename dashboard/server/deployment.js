@@ -135,7 +135,7 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       throw new Error(`Timed out waiting for target image and ArgoCD Synced/Healthy${lastError ? `: ${lastError}` : ''}. The pushed change remains; no automatic rollback was performed.`);
     } catch (error) {
       Object.assign(result, { state: 'failed', failureStage: result.stage, stage: 'failed', success: false, message: `${phase} failed: ${error.message}. Local changes and any commit are preserved; inspect repository state before retrying.` });
-    } finally { active = false; }
+    } finally { result.finishedAt = new Date(now()).toISOString(); active = false; }
     return result;
   }
   return {
@@ -144,7 +144,7 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       if (!['deploy', 'rollback'].includes(operation)) throw Object.assign(new Error('Unknown GitOps operation'), { statusCode: 400 });
       if (active) throw Object.assign(new Error('A deployment is already in progress'), { statusCode: 409 });
       active = true;
-      job = { id: crypto.randomUUID(), tag, operation, state: 'requested', stage: 'request-accepted', progress: { requestAccepted: true, commitCreated: false, argoSynced: false, rolloutReady: false, healthy: false }, dryRun: !real, success: false, message: `${operation === 'rollback' ? 'Rollback' : 'Deployment'} requested` };
+      job = { startedAt: new Date(now()).toISOString(), id: crypto.randomUUID(), tag, operation, state: 'requested', stage: 'request-accepted', progress: { requestAccepted: true, commitCreated: false, argoSynced: false, rolloutReady: false, healthy: false }, dryRun: !real, success: false, message: `${operation === 'rollback' ? 'Rollback' : 'Deployment'} requested` };
       if (!real) return await run(tag, job);
       void run(tag, job);
       return { ...job };

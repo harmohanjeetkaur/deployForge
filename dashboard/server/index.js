@@ -1,4 +1,5 @@
 import express from 'express';
+import { argoSummary } from './cluster-view.js';
 import { createOperationRouter } from './operations.js';
 import { buildDeploymentHistory } from './history.js';
 import { verifyImageTag } from './registry.js';
@@ -104,7 +105,9 @@ async function getDeploymentStatus() {
       name: pod.metadata.name,
       status: pod.status.phase,
       ready: `${pod.status.containerStatuses?.[0]?.ready ? '1' : '0'}/1`,
-      restarts: pod.status.containerStatuses?.[0]?.restartCount || 0
+      restarts: pod.status.containerStatuses?.[0]?.restartCount || 0,
+      node: pod.spec.nodeName || null,
+      reason: pod.status.containerStatuses?.[0]?.state?.waiting?.reason || pod.status.containerStatuses?.[0]?.state?.terminated?.reason || null
     }));
 
     return {
@@ -112,6 +115,10 @@ async function getDeploymentStatus() {
       namespace: NAMESPACE,
       desiredReplicas,
       readyReplicas,
+      updatedReplicas: deployment.status.updatedReplicas ?? 0,
+      availableReplicas: deployment.status.availableReplicas ?? 0,
+      revision: deployment.metadata.annotations?.['deployment.kubernetes.io/revision'] || null,
+      conditions: (deployment.status.conditions || []).map(({ type, status, reason }) => ({ type, status, reason })),
       currentImage: containerImage,
       pods
     };
@@ -134,7 +141,12 @@ async function getDeploymentHistory() {
 app.get('/api/kubernetes/status', async (req, res) => {
   try {
     const status = await getDeploymentStatus();
-    res.json(status);
+    // Optional ArgoCD metadata must not hide otherwise available workload data.
+    const name = process.env.DEPLOYFORGE_ARGOCD_APP || 'deployforge';
+    let argo = null;
+    try { argo = argoSummary(JSON.parse(await executeKubectl(['get', 'application', name, '-n', process.env.DEPLOYFORGE_ARGOCD_NAMESPACE || 'argocd', '-o', 'json'])), name); } catch { /* rendered as unavailable */ }
+    res.set('Cache-Control', 'no-store');
+    res.json({ ...status, argo });
   } catch (error) {
     console.error('Error in /api/kubernetes/status:', error);
     res.status(500).json({

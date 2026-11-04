@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import DeploymentWorkspace from './DeploymentWorkspace.jsx'
+import ExecutionStatus from './ExecutionStatus.jsx'
+import { executionState, validateExecutionConfig } from './execution-state.js'
+import { Overview, KubernetesPage, SecurityPage, MonitoringPage } from './ControlPages.jsx'
 
 function App() {
   const [k8sData, setK8sData] = useState(null)
@@ -27,7 +30,13 @@ function App() {
   const [deployError, setDeployError] = useState(null)
   const [deployPhase, setDeployPhase] = useState('idle')
   const [backendConfig, setBackendConfig] = useState(null)
-  const executionReady = backendConfig === null ? null : backendConfig.capabilities?.realRequests === true && backendConfig.executionEnabled === true && backendConfig.dryRun === false
+  const [configError, setConfigError] = useState(null)
+  const [lastOperation, setLastOperation] = useState(null)
+  const configRequestRef = useRef(0)
+  const configControllerRef = useRef(null)
+  const [configCheckedAt, setConfigCheckedAt] = useState(null)
+  const execution = executionState(backendConfig, configError)
+  const executionReady = execution.ready
   const submissionLockRef = useRef(false)
   const [deployToken, setDeployToken] = useState('')
   const deployRequestRef = useRef(0)
@@ -35,12 +44,20 @@ function App() {
 
   useEffect(() => {
     fetchDeploymentConfig()
+    const interval = setInterval(fetchDeploymentConfig, 10000)
+    const refresh = () => fetchDeploymentConfig()
+    window.addEventListener('focus', refresh)
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVisible)
+    const configurationController = configControllerRef
+    const configRef = configRequestRef
     const controllerRef = deployControllerRef
     const requestRef = deployRequestRef
-    return () => { requestRef.current++; controllerRef.current?.abort() }
+    return () => { clearInterval(interval); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVisible); configurationController.current?.abort(); configRef.current++; requestRef.current++; controllerRef.current?.abort() }
   }, [])
 
   const navigate = page => {
+    fetchDeploymentConfig()
     if (page !== 'deployments') { setDeployToken(''); setShowDeployConfirm(false) }
     setCurrentPage(page)
   }
@@ -66,13 +83,21 @@ function App() {
   }, [])
 
   async function fetchDeploymentConfig() {
+    const requestId = ++configRequestRef.current
+    configControllerRef.current?.abort()
+    const controller = new AbortController()
+    configControllerRef.current = controller
     try {
-      const response = await fetch('/api/deploy/config', { cache: 'no-store' })
-      if (!response.ok) throw new Error('Deployment mode unavailable')
+      const response = await fetch('/api/deploy/config', { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) })
+      if (!response.ok) throw new Error(`Configuration API returned HTTP ${response.status}`)
       const config = await response.json()
-      if (typeof config.dryRun !== 'boolean') throw new Error('Invalid deployment configuration')
+      validateExecutionConfig(config)
+      if (requestId !== configRequestRef.current) return
       setBackendConfig(config)
-    } catch { setBackendConfig(null) }
+      setConfigCheckedAt(Date.now())
+      setConfigError(null)
+      if ('latestOperation' in config) setLastOperation(config.latestOperation)
+    } catch (err) { if (requestId === configRequestRef.current) { setBackendConfig(null); setConfigCheckedAt(Date.now()); setConfigError(err.name === 'TimeoutError' ? 'Configuration request timed out' : err.message) } }
   }
 
   async function fetchKubernetesStatus() {
@@ -82,6 +107,7 @@ function App() {
         throw new Error('Failed to fetch Kubernetes status')
       }
       const data = await response.json()
+      if (!data || !Array.isArray(data.pods) || !Number.isInteger(data.readyReplicas) || !Number.isInteger(data.desiredReplicas)) throw new Error('Invalid Kubernetes status response')
       setK8sData(data)
       setError(null)
     } catch (err) {
@@ -115,6 +141,17 @@ function App() {
       if (requestId === historyRequestIdRef.current) setHistoryLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!k8sData?.currentImage || backendConfig === null || 'latestOperation' in backendConfig) return
+    const controller = new AbortController()
+    const tag = k8sData.currentImage.split(':').at(-1)
+    fetch(`/api/deploy/status/${tag}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) })
+      .then(async response => response.ok ? response.json() : null)
+      .then(job => { if (!controller.signal.aborted) setLastOperation(job) })
+      .catch(() => { if (!controller.signal.aborted) setLastOperation(null) })
+    return () => controller.abort()
+  }, [k8sData?.currentImage, backendConfig])
 
   const getImageShort = (fullImage) => {
     if (!fullImage) return 'unknown'
@@ -186,7 +223,7 @@ function App() {
     setDeployResult(null)
     setDeployError(null)
     setDeployPhase('idle')
-    setOperation('deploy')
+    setOperation(version && version.type !== 'available' ? 'rollback' : 'deploy')
     setShowDeployConfirm(false)
     verificationRequestIdRef.current++
     setVerifying(false)
@@ -211,11 +248,11 @@ function App() {
   }
 
   const commonBlockers = []
-  if (deploying) commonBlockers.push('A GitOps operation is already in progress.')
-  if (executionReady !== true) commonBlockers.push(executionReady === null ? 'Deployment configuration is unavailable. Refresh the API connection.' : 'GitOps execution is not configured. Ask your platform operator to enable execution on the local API.')
+  if (deploying || ['requested', 'in-progress'].includes(lastOperation?.state)) commonBlockers.push('A GitOps operation is already in progress.')
+  if (executionReady !== true) commonBlockers.push(`${execution.label}. Review the backend configuration notice above.`)
   if (backendConfig?.authenticationConfigured === false) commonBlockers.push('Configure deployment authentication on the local API.')
   if (!showPreview) commonBlockers.push('Preview the proposed image change before confirming.')
-  if (!deployToken.trim()) commonBlockers.push('Enter the deployment token to authorize this request.')
+  if (!deployToken.trim()) commonBlockers.push('Authorize Deployment with your token before continuing.')
   if (!selectedVersion) commonBlockers.push('Select a version.')
   if (!k8sData || error) commonBlockers.push('Current Kubernetes status is unavailable.')
   if (selectedVersion) {
@@ -324,7 +361,7 @@ function App() {
     deployControllerRef.current = controller
     const deadline = Date.now() + 420000
     setDeploying(true)
-    setDeployPhase('requested')
+    setDeployPhase('submitting')
     setDeployResult(null)
     setDeployError(null)
     setShowDeployConfirm(false)
@@ -334,7 +371,7 @@ function App() {
       const data = await response.json()
       if (!response.ok) {
         if (response.status === 401) setDeployToken('')
-        throw Object.assign(new Error(data.message || data.error || 'Deployment request failed'), { result: data })
+        throw Object.assign(new Error(data.message || data.error || 'Deployment request failed'), { result: data, status: response.status })
       }
       if (data.dryRun !== false || data.state === 'dry-run') throw new Error('No deployment was performed. The API returned a simulation instead of executing GitOps. Ask your platform operator to configure execution.')
       if (data.state === 'succeeded' && (data.success !== true || !data.progress?.healthy || !data.progress?.argoSynced || !data.progress?.rolloutReady)) throw new Error('The API did not confirm deployment health')
@@ -368,9 +405,12 @@ function App() {
       }
     } catch (err) {
       if (current()) {
-        setDeployPhase('failed')
-        if (err.result?.state === 'failed') setDeployResult(err.result)
-        setDeployError(`${err.message}${['TimeoutError', 'AbortError'].includes(err.name) ? '. Request outcome is unknown; inspect Git and cluster state before retrying.' : ''}`)
+        const authorizationRejected = err.status === 401 || err.status === 403
+        setDeployPhase(authorizationRejected ? 'authorization-error' : 'failed')
+        if (!authorizationRejected && err.result?.state === 'failed') setDeployResult(err.result)
+        setDeployError(authorizationRejected
+          ? `Authorization error: ${err.message}. This request was rejected; it is not evidence of a failed GitOps rollout.`
+          : `${err.message}${['TimeoutError', 'AbortError'].includes(err.name) ? '. Request outcome is unknown; inspect Git and cluster state before retrying.' : ''}`)
       }
     } finally {
       submissionLockRef.current = false
@@ -386,97 +426,25 @@ function App() {
     <div className="dashboard">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h2>DeployForge</h2>
+          <div className="brand-mark" aria-hidden="true">DF</div><h2>DeployForge</h2><p>PLATFORM CONTROL</p>
         </div>
-        <nav className="sidebar-nav">
-          <a href="#" className={`nav-item ${currentPage === 'overview' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('overview') }}>Overview</a>
-          <a href="#" className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('deployments') }}>Deployments</a>
-          <a href="#" className={`nav-item ${currentPage === 'kubernetes' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('kubernetes') }}>Kubernetes</a>
-          <a href="#" className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('security') }}>Security</a>
-          <a href="#" className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('settings') }}>Settings</a>
+        <nav className="sidebar-nav" aria-label="Workspace navigation">
+          <a href="#" aria-current={currentPage === 'overview' ? 'page' : undefined} className={`nav-item ${currentPage === 'overview' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('overview') }}>Overview</a>
+          <a href="#" aria-current={currentPage === 'deployments' ? 'page' : undefined} className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('deployments') }}>Deployments</a>
+          <a href="#" aria-current={currentPage === 'kubernetes' ? 'page' : undefined} className={`nav-item ${currentPage === 'kubernetes' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('kubernetes') }}>Kubernetes</a>
+          <a href="#" aria-current={currentPage === 'security' ? 'page' : undefined} className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('security') }}>Security</a>
+          <a href="#" aria-current={currentPage === 'monitoring' ? 'page' : undefined} className={`nav-item ${currentPage === 'monitoring' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('monitoring') }}>Monitoring</a>
+          <a href="#" aria-current={currentPage === 'settings' ? 'page' : undefined} className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('settings') }}>Settings</a>
         </nav>
       </aside>
 
       <main className="main-content">
         <header className="header">
-          <h1>DeployForge Control Center</h1>
+          <div><p className="header-breadcrumb">DeployForge / Workspace</p><h1>Platform Control Center</h1></div><div className="environment-chip"><span className="status-dot" />{backendConfig?.environment || 'Environment unavailable'}</div>
           {error && <div className="error-badge">Connection Error</div>}
         </header>
 
-        {currentPage === 'overview' && (
-          <>
-            <section className="summary-cards">
-              <div className="card">
-                <h3>Deployment Health</h3>
-                {loading ? (
-                  <p className="card-value">Loading...</p>
-                ) : error ? (
-                  <p className="card-value error">Unavailable</p>
-                ) : (
-                  <>
-                    <p className={`card-value ${k8sData.readyReplicas === k8sData.desiredReplicas ? 'healthy' : 'warning'}`}>
-                      {k8sData.readyReplicas === k8sData.desiredReplicas ? 'Healthy' : 'Degraded'}
-                    </p>
-                    <p className="card-label">{k8sData.readyReplicas}/{k8sData.desiredReplicas} replicas ready</p>
-                  </>
-                )}
-              </div>
-              <div className="card">
-                <h3>Running Pods</h3>
-                {loading ? (
-                  <p className="card-value">Loading...</p>
-                ) : error ? (
-                  <p className="card-value error">-</p>
-                ) : (
-                  <>
-                    <p className="card-value">{k8sData.pods.length}</p>
-                    <p className="card-label">{k8sData.pods.filter(p => p.status === 'Running').length} running</p>
-                  </>
-                )}
-              </div>
-              <div className="card">
-                <h3>Current Image Version</h3>
-                {loading ? (
-                  <p className="card-value">Loading...</p>
-                ) : error ? (
-                  <p className="card-value error">-</p>
-                ) : (
-                  <>
-                    <p className="card-value">{getImageShort(k8sData.currentImage)}</p>
-                    <p className="card-label">{k8sData.namespace}</p>
-                  </>
-                )}
-              </div>
-              <div className="card">
-                <h3>Security Findings</h3>
-                <p className="card-value warning">Demo Data</p>
-                <p className="card-label">Not connected to CI</p>
-              </div>
-            </section>
-
-            <section className="section">
-              <h2>Quick Stats</h2>
-              <div className="table-container">
-                <table className="table">
-                  <tbody>
-                    <tr>
-                      <td><strong>Namespace</strong></td>
-                      <td>{k8sData?.namespace || 'Loading...'}</td>
-                    </tr>
-                    <tr>
-                      <td><strong>Deployment</strong></td>
-                      <td>{k8sData?.deploymentName || 'Loading...'}</td>
-                    </tr>
-                    <tr>
-                      <td><strong>Desired Replicas</strong></td>
-                      <td>{k8sData?.desiredReplicas || 'Loading...'}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
-        )}
+        {currentPage === 'overview' && <Overview data={k8sData} loading={loading} error={error} history={history} lastOperation={lastOperation} config={backendConfig} configError={configError} configCheckedAt={configCheckedAt} onRefreshConfig={fetchDeploymentConfig} onRefresh={() => { fetchKubernetesStatus(); fetchDeploymentHistory(); fetchDeploymentConfig() }} onNavigate={navigate} />}
 
         {currentPage === 'deployments' && <DeploymentWorkspace
           data={k8sData} selected={selectedVersion} images={availableImages}
@@ -487,7 +455,7 @@ function App() {
           operation={operation} phase={deployPhase} result={deployResult} error={deployError}
           blockers={commonBlockers} rollbackBlocker={rollbackBlocker} eligibility={rollbackEligibilityLabel}
           preview={showPreview} previewError={previewError} environment={backendConfig?.environment}
-          executionReady={executionReady}
+          executionConfig={backendConfig} configError={configError} configCheckedAt={configCheckedAt} onRefreshConfig={fetchDeploymentConfig} lastOperation={lastOperation}
           onSelect={value => {
             if (value.startsWith('k8s-')) changeSelectedVersion((history || []).find(h => h.revision === value.replace('k8s-', '')) || null)
             else if (value.startsWith('ghcr-')) changeSelectedVersion(availableImages.find(img => img.id === value.replace('ghcr-', '')) || null)
@@ -499,110 +467,28 @@ function App() {
           onSelectRollback={entry => { changeSelectedVersion(entry); setOperation('rollback'); document.getElementById('version-select')?.focus() }}
         />}
 
-        {currentPage === 'kubernetes' && (
-          <>
-            <section className="section">
-              <h2>Deployment Status</h2>
-              {loading && <p className="loading-text">Loading deployment status...</p>}
-              {error && <p className="error-text">Failed to load deployment status: {error}</p>}
-              {!loading && !error && (
-                <div className="table-container">
-                  <table className="table">
-                    <tbody>
-                      <tr>
-                        <td><strong>Deployment Name</strong></td>
-                        <td>{k8sData.deploymentName}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Namespace</strong></td>
-                        <td>{k8sData.namespace}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Desired Replicas</strong></td>
-                        <td>{k8sData.desiredReplicas}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Ready Replicas</strong></td>
-                        <td>{k8sData.readyReplicas}</td>
-                      </tr>
-                      <tr>
-                        <td><strong>Current Image</strong></td>
-                        <td>{k8sData.currentImage}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-
-            <section className="section">
-              <h2>Kubernetes Pods</h2>
-              {loading && <p className="loading-text">Loading pod information...</p>}
-              {error && <p className="error-text">Failed to load pod information: {error}</p>}
-              {!loading && !error && (
-                <div className="table-container">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Pod Name</th>
-                        <th>Status</th>
-                        <th>Ready</th>
-                        <th>Restarts</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {k8sData.pods.map((pod, index) => (
-                        <tr key={index}>
-                          <td>{pod.name}</td>
-                          <td><span className={`status ${pod.status === 'Running' ? 'success' : 'warning'}`}>{pod.status}</span></td>
-                          <td>{pod.ready}</td>
-                          <td>{pod.restarts}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          </>
-        )}
-
-        {currentPage === 'security' && (
-          <section className="section">
-            <h2>Security Findings</h2>
-            <div className="security-demo">
-              <div className="demo-note">
-                <strong>⚠️ Demo Mode</strong>
-                <p>Security findings are not connected to CI/CD pipeline yet.</p>
-                <p>Once integrated, this section will display:</p>
-                <ul>
-                  <li>Vulnerability scan results from Trivy</li>
-                  <li>Container image security analysis</li>
-                  <li>Dependency vulnerability reports</li>
-                  <li>Security policy compliance status</li>
-                </ul>
-              </div>
-            </div>
-          </section>
-        )}
+        {currentPage === 'kubernetes' && <KubernetesPage data={k8sData} loading={loading} error={error} config={backendConfig} onRefresh={fetchKubernetesStatus} />}
+        {currentPage === 'security' && <SecurityPage />}
+        {currentPage === 'monitoring' && <MonitoringPage />}
 
         {currentPage === 'settings' && (
           <section className="section">
             <h2>Connection Settings</h2>
+            <ExecutionStatus config={backendConfig} error={configError} checkedAt={configCheckedAt} onRefresh={fetchDeploymentConfig} />
             <div className="table-container">
               <table className="table">
                 <tbody>
                   <tr>
                     <td><strong>Backend API</strong></td>
-                    <td>http://localhost:3001</td>
+                    <td>Same-origin /api proxy → 127.0.0.1:3001</td>
                   </tr>
                   <tr>
                     <td><strong>Kubernetes Namespace</strong></td>
-                    <td>deployforge-gitops</td>
+                    <td>{k8sData?.namespace || 'Unavailable'}</td>
                   </tr>
                   <tr>
                     <td><strong>Deployment Name</strong></td>
-                    <td>deployforge</td>
+                    <td>{k8sData?.deploymentName || 'Unavailable'}</td>
                   </tr>
                   <tr>
                     <td><strong>GHCR Repository</strong></td>

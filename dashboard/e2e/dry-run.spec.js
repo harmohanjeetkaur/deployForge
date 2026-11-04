@@ -183,7 +183,7 @@ test('changing version during request discards late results and clears busy stat
   await openVersions(page)
   await verifyAndConfirm(page)
   await started
-  await expect(page.getByRole('status')).toHaveText('Deployment requested')
+  await expect(page.getByRole('status')).toHaveText('Submitting request')
   await page.locator('#version-select').selectOption('')
   await previewIfAvailable(page)
   release()
@@ -230,7 +230,7 @@ test('confirmation cancel sends no deployment request and current image is block
   await page.locator('#version-select').selectOption('k8s-4')
   await previewIfAvailable(page)
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
+  await expect(page.getByTestId('rollback-action')).toBeDisabled()
   expect(requests).toBe(0)
 })
 

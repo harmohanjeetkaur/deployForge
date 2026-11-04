@@ -1,5 +1,5 @@
 export const executionConfig = {
-  dryRun: false, executionEnabled: true, authenticationConfigured: true,
+  latestOperation: null, dryRun: false, executionEnabled: true, authenticationConfigured: true,
   environment: 'docker-desktop', capabilities: { realRequests: true, rollback: true }
 }
 export async function previewIfAvailable(page) {

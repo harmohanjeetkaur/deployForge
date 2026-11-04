@@ -65,3 +65,28 @@ for (const failure of ['ArgoCD synchronization failed', 'Kubernetes rollout exce
     assert.equal(result.state, 'failed'); assert.equal(result.success, false); assert.match(result.message, new RegExp(failure)); assert.equal(result.pushed, true);
   });
 }
+
+test('config exposes only the current process operation, disables caching and never includes credentials', async () => {
+  const job = { id: 'latest', operation: 'rollback', state: 'succeeded', startedAt: '2026-11-04T13:00:00Z', progress: { healthy: true } };
+  const router = createOperationRouter({ token: 'never-return-this-secret', real: true, deployer: { status: job } });
+  const handler = router.stack.find(layer => layer.route?.path === '/deploy/config').route.stack[0].handle;
+  const response = { set(name, value) { this.cache = [name, value]; }, json(body) { this.body = body; } };
+  handler({}, response);
+  assert.deepEqual(response.cache, ['Cache-Control', 'no-store']);
+  assert.deepEqual(response.body.latestOperation, job);
+  assert.equal(response.body.authenticationConfigured, true);
+  assert.ok(!JSON.stringify(response.body).includes('never-return-this-secret'));
+  const empty = createOperationRouter({ deployer: {} });
+  empty.stack.find(layer => layer.route?.path === '/deploy/config').route.stack[0].handle({}, response);
+  assert.equal(response.body.latestOperation, null);
+  assert.equal(response.body.dryRun, true);
+});
+
+test('operation timestamps describe the observed process job without persisting history', async () => {
+  const engine = fixture(async () => ({ healthy: true, argoSynced: true, rolloutReady: true }));
+  await engine.request(tag, 'deploy');
+  const result = await finish(engine);
+  assert.equal(result.state, 'succeeded');
+  assert.ok(Number.isFinite(Date.parse(result.startedAt)));
+  assert.ok(Date.parse(result.finishedAt) >= Date.parse(result.startedAt));
+});

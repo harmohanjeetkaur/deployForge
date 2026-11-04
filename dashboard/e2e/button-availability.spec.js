@@ -45,11 +45,9 @@ test('legacy backend metadata is Unknown, never No; token and eligibility blocke
   await verify(page)
   await expect(page.locator('.version-info')).toContainText('Rollback eligible: Unknown — backend eligibility metadata unavailable')
   await expect(page.locator('#rollback-requirements')).toContainText('Load the latest backend code, then refresh versions.')
-  await expect(page.locator('#gitops-requirements')).toContainText('Enter the deployment token to authorize this request.')
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
+  await expect(page.locator('#gitops-requirements')).toContainText('Authorize Deployment with your token before continuing.')
   await expect(page.getByTestId('rollback-action')).toBeDisabled()
   await page.locator('input[type=password]').fill(mockToken)
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
   await expect(page.getByTestId('rollback-action')).toBeDisabled()
   expect(calls.requests()).toBe(0)
 })
@@ -60,12 +58,11 @@ test('valid previous revision enables authenticated rollback; empty/whitespace t
   await expect(page.locator('.version-info')).toContainText('Rollback eligible: Yes')
   for (const token of ['', '   ']) {
     await page.locator('input[type=password]').fill(token)
-    await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
     await expect(page.getByTestId('rollback-action')).toBeDisabled()
   }
   await page.locator('input[type=password]').fill(` ${mockToken} `)
   await expect(page.getByRole('heading', { name: 'Deploy a Version', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeEnabled()
+  await expect(page.getByTestId('rollback-action')).toBeEnabled()
   await page.getByTestId('rollback-action').click()
   await expect(page.locator('.deploy-confirm-details')).toContainText(current)
   await expect(page.locator('.deploy-confirm-details')).toContainText(previous)
@@ -98,12 +95,11 @@ for (const value of [false, 'true']) {
   })
 }
 
-test('unavailable Kubernetes status keeps both operations blocked despite verification', async ({ page }) => {
+test('unavailable Kubernetes status keeps the selected operation blocked despite verification', async ({ page }) => {
   await setup(page, { statusUnavailable: true })
   await page.locator('input[type=password]').fill(mockToken)
   await verify(page)
   await expect(page.locator('#gitops-requirements')).toContainText('Current Kubernetes status is unavailable.')
-  await expect(page.getByRole('button', { name: 'Deploy Version', exact: true })).toBeDisabled()
   await expect(page.getByTestId('rollback-action')).toBeDisabled()
 })
 
