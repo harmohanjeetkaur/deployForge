@@ -29,6 +29,11 @@ for (const width of [1280, 390]) {
       backend.configure(config)
       for (const name of ['Overview', 'Deployments', 'Settings']) {
         await page.getByRole('link', { name, exact: true }).click()
+        if (name === 'Overview') {
+          await expect(badge(page)).toHaveCount(0)
+          await expect(page.getByText(label, { exact: true })).toBeVisible()
+          continue
+        }
         await expect(badge(page)).toHaveAttribute('data-state', key)
         await expect(badge(page).locator('strong')).toHaveText(label)
         await expect(badge(page)).toContainText('Server authentication: Configured')
@@ -37,12 +42,14 @@ for (const width of [1280, 390]) {
       }
     }
     await page.reload()
-    await expect(badge(page)).toHaveAttribute('data-state', 'enabled')
+    await expect(badge(page)).toHaveCount(0)
+    await expect(page.getByText('Execution enabled', { exact: true })).toBeVisible()
   })
 }
 test('backend restart simulation fails closed and recovers via poll, focus, and explicit refresh', async ({ page }) => {
   await page.clock.install()
   const backend = await setup(page)
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(badge(page)).toHaveAttribute('data-state', 'disabled')
   backend.unavailable(true)
   await page.clock.runFor(10000)
@@ -58,6 +65,7 @@ test('backend restart simulation fails closed and recovers via poll, focus, and 
 })
 test('contradictory flags and incompatible capabilities cannot advertise real execution', async ({ page }) => {
   const backend = await setup(page)
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
   backend.configure({ ...executionConfig, dryRun: true })
   await page.getByRole('button', { name: 'Refresh configuration', exact: true }).click()
   await expect(badge(page)).toHaveAttribute('data-state', 'unavailable')
@@ -69,6 +77,7 @@ test('contradictory flags and incompatible capabilities cannot advertise real ex
 })
 test('superseded configuration response cannot restore stale enabled state', async ({ page }) => {
   await setup(page)
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(badge(page)).toHaveAttribute('data-state', 'disabled')
   let started, release
   const received = new Promise(resolve => { started = resolve })
@@ -105,6 +114,11 @@ test('live configuration agrees through Vite and across all three pages on deskt
     await page.setViewportSize({ width, height: 844 })
     for (const name of ['Overview', 'Deployments', 'Settings']) {
       await page.getByRole('link', { name, exact: true }).click()
+      if (name === 'Overview') {
+        await expect(badge(page)).toHaveCount(0)
+        await expect(page.getByRole('button', { name: 'Refresh configuration', exact: true })).toHaveCount(0)
+        continue
+      }
       await expect(badge(page)).toHaveAttribute('data-state', key)
       await expect(badge(page)).toContainText(`Server authentication: ${config.authenticationConfigured ? 'Configured' : 'Missing'}`)
       await expect(badge(page)).not.toContainText('Waiting for API response')

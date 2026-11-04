@@ -426,7 +426,7 @@ function App() {
           {error && <div className="error-badge">Connection Error</div>}
         </header>
 
-        {currentPage === 'overview' && <Overview data={k8sData} loading={loading} error={error} history={history} lastOperation={lastOperation} config={backendConfig} configError={configError} configCheckedAt={configCheckedAt} onRefreshConfig={fetchDeploymentConfig} onRefresh={() => { fetchKubernetesStatus(); fetchDeploymentHistory(); fetchDeploymentConfig() }} onNavigate={navigate} />}
+        {currentPage === 'overview' && <Overview data={k8sData} loading={loading} error={error} history={history} lastOperation={lastOperation} config={backendConfig} configError={configError} onRefresh={() => { fetchKubernetesStatus(); fetchDeploymentHistory(); fetchDeploymentConfig() }} onNavigate={navigate} />}
 
         {currentPage === 'deployments' && <DeploymentWorkspace
           data={k8sData} selected={selectedVersion} images={availableImages}

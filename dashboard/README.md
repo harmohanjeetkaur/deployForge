@@ -163,8 +163,9 @@ execution. Authentication is independently reported and remains mandatory.
 Configuration refreshes on page entry, window focus, tab visibility, manual
 refresh, and a ten-second interval. Requests time out and superseded requests are
 cancelled. Unavailable, contradictory, or unsupported configuration never enables
-an action. All three pages show the same execution state, authentication status,
-and last-check time. A deliberate backend restart is required to change execution
+an action. Overview retains a compact execution-mode field in Current release. Detailed
+execution state, authentication status, and last-check time appear in Settings
+and Deployments. A deliberate backend restart is required to change execution
 mode; the dashboard never enables it automatically.
 
 Run the GET-only live consistency check without changing execution mode:

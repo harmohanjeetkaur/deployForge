@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import ExecutionStatus from './ExecutionStatus.jsx'
 import { executionState } from './execution-state.js'
 
 const shortImage = image => image?.split(':').at(-1) || 'Unavailable'
@@ -24,13 +23,12 @@ export function PodCards({ data }) {
     return <article className="pod-card" key={pod.name}><div className="panel-heading"><span className={`status-dot ${ready ? 'good' : 'attention'}`} /><Badge good={ready} warning={!ready}>{pod.status || 'Unknown'} · {pod.ready || 'Unknown'}</Badge></div><h3>{pod.name}</h3><dl className="inline-facts"><div><dt>Restarts</dt><dd>{value(pod.restarts)}</dd></div><div><dt>Node</dt><dd>{value(pod.node)}</dd></div></dl><p className="pod-diagnostic">{pod.reason || (ready ? 'Container readiness checks are passing.' : 'Check container state, events, and readiness probes.')}</p>{pod.message && <p className="pod-diagnostic">{pod.message}</p>}</article>
   }) : <div className="data-state">No pods reported for this deployment.</div>}</div>
 }
-export function Overview({ data, loading, error, history, lastOperation, config, configError, configCheckedAt, onRefreshConfig, onRefresh, onNavigate }) {
+export function Overview({ data, loading, error, history, lastOperation, config, configError, onRefresh, onNavigate }) {
   const argo = data?.argo
   const ready = data?.desiredReplicas > 0 && data?.readyReplicas === data?.desiredReplicas
   const revision = data?.revision ?? history?.find(entry => entry.isCurrent)?.revision
   return <>
     <PageHeading eyebrow="WORKSPACE OVERVIEW" title="Your platform, at a glance" action={<button className="btn btn-secondary" onClick={onRefresh}>Refresh status</button>}>Live workload state and release context in one place.</PageHeading>
-    <ExecutionStatus config={config} error={configError} checkedAt={configCheckedAt} onRefresh={onRefreshConfig} />
     <DataState loading={loading} error={error} onRetry={onRefresh}>
       <section className="metric-grid" aria-label="Platform health">
         <Metric label="Replica readiness" good={ready} detail={ready ? 'All desired replicas are ready' : data?.desiredReplicas === 0 ? 'Deployment is scaled to zero' : 'Readiness requires attention'}>{value(data?.readyReplicas)}<span className="metric-denominator"> / {value(data?.desiredReplicas)}</span></Metric>
