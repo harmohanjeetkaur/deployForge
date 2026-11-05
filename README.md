@@ -24,7 +24,7 @@ A simple Go-based REST API for task management using Go's standard library.
 
 ### Implementation Details
 
-- Built with Go 1.22+ using standard `net/http` package
+- Built with Go 1.26.10+ using standard `net/http` package
 - Uses Go 1.22+ ServeMux routing
 - In-memory task storage using `sync.RWMutex` for thread-safe access
 - Tasks are reset when the application restarts
