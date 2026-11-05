@@ -1,3 +1,4 @@
+import { securitySummary } from './security.js';
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { approvedRepository, repositories } from './repositories.js';
@@ -157,6 +158,22 @@ export function createReleaseRouter({ service, github, token, sessions }) {
     else { const error = sessions?.authorize(req) || (!sessions && { status: 401, message: 'Local session required' }); if (error) return res.status(error.status).json({ message: error.message }); }
     next();
   });
+  // Short cache limits artifact downloads; failures and missing reports are not cached.
+  const securityCache = new Map();
+  router.get('/security/releases/:id', wrap(async (req, res) => {
+    const release = service.get(req.params.id), repository = approvedRepository(release.repository);
+    if (!release.run) return res.status(409).json({ message: 'Waiting for the release workflow; security reports are not available yet' });
+    const key = `${release.id}:${release.run.id}:${release.run.attempt}`;
+    const cached = securityCache.get(key);
+    if (cached && Date.now() - cached.at < 60000) return res.json(cached.value);
+    const reports = await github.securityReports(repository, release);
+    const value = securitySummary(repository, release, reports);
+    if (value.platforms.every(p => p.status === 'available')) {
+      if (securityCache.size >= 16) securityCache.delete(securityCache.keys().next().value);
+      securityCache.set(key, { at: Date.now(), value });
+    }
+    res.json(value);
+  }));
   router.get('/repositories', (_req, res) => res.json({ repositories, executionEnabled: service.enabled }));
   router.get('/repositories/:id/sources', wrap(async (req, res) => res.json({ sources: await github.sources(approvedRepository(req.params.id)) })));
   router.get('/repositories/:id/source', wrap(async (req, res) => res.json(await github.source(approvedRepository(req.params.id), req.query.ref))));

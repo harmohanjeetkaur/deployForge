@@ -8,6 +8,7 @@ async function setup(page, { replicas = 3, failure = false, monitoring = false }
     expect(route.request().method()).toBe('GET')
     const path = new URL(route.request().url()).pathname
     if (path === '/api/deploy/config') return route.fulfill({ json: executionConfig })
+    if (path === '/api/releases') return route.fulfill({ status: 503, json: {} })
     if (path === '/api/kubernetes/history') return route.fulfill({ json: [] })
     if (path === '/api/monitoring/status') return route.fulfill(monitoring ? { json: { services: [{ name: 'Prometheus', status: 'up', url: 'http://127.0.0.1:9090' }, { name: 'Grafana', status: 'down', url: 'https://example.com' }] } } : { status: 404, json: {} })
     if (path === '/api/kubernetes/status') return route.fulfill(failure ? { status: 500, json: {} } : { json: { deploymentName: 'deployforge', namespace: 'deployforge-gitops', currentImage: image, desiredReplicas: replicas, readyReplicas: replicas, updatedReplicas: replicas, availableReplicas: replicas, revision: '7', pods: replicas ? [{ name: 'pod-one', status: 'Running', ready: '1/1', restarts: 0, node: 'docker-desktop' }, { name: 'pod-two', status: 'Pending', ready: '0/1', restarts: 1, reason: 'ImagePullBackOff' }] : [], argo: { application: 'deployforge', sync: 'OutOfSync', health: 'Degraded', revision: 'b'.repeat(40), operation: 'Failed' } } })
@@ -36,8 +37,7 @@ test('connection failures and security data absence are explicit', async ({ page
   await setup(page, { failure: true })
   await expect(page.getByRole('alert').filter({ hasText: 'Live data unavailable' })).toContainText('Live data unavailable')
   await page.getByRole('link', { name: 'Security', exact: true }).click()
-  await expect(page.getByText('Security results unavailable')).toBeVisible()
-  await expect(page.getByText('Not evaluated', { exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('Release history unavailable')
   await expect(page.getByText('Demo Mode')).toHaveCount(0)
   await page.getByRole('link', { name: 'Monitoring', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Monitoring backend is not configured')

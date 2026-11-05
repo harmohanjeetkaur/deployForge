@@ -88,7 +88,8 @@ multi-user authentication. Environment files remain ignored.
 Real operations require main synchronized with origin/main and a clean tracked
 working tree. One process-local lock covers deployment and rollback through final
 convergence. Run one API process, avoid concurrent repository edits, and do not
-restart during an operation. Locks and job history do not survive restarts.
+restart during an operation. Manual-operation status is process-local; release-owned
+promotion checkpoints are durable.
 
 ## Verification
 
@@ -103,7 +104,7 @@ Browser tests use installed Google Chrome. Execution-enabled browser/API fixture
 are simulated and never enable a real backend or run a Git/Kubernetes mutation.
 The original backend dry-run behavior remains available for development tooling
 and the opt-in read-only integration test described in the server notes. It is
-not the normal release UI. Security findings are explicitly unavailable until a CI results API is connected.
+not the normal release UI. Security findings come from the selected release’s actual CI artifacts; missing reports remain unknown.
 
 ### Readiness, authorization, and operation history
 
@@ -123,9 +124,9 @@ The API configuration includes `latestOperation` from the current backend proces
 The UI also supports older backends through their existing image-tag status route.
 Only one operation is retained, and it is lost on backend restart. Older operations
 may have no timestamp. Kubernetes ReplicaSet creation time is not a release time.
-No persistence has been added. If durable history is required, a separately approved
-minimal append-only operation journal with restricted permissions and no credentials
-would be a possible next step.
+Standalone manual-operation status is process-local. Release-owned promotion checkpoints
+and release history are persisted by the release coordinator; a backend restart
+resumes observation without repeating uncertain Git writes.
 
 Live session verification (only session setup writes; release confirmations are cancelled):
 
@@ -140,21 +141,39 @@ setup may write session state. The test never enables execution.
 
 ### Platform control center
 
-Overview and Kubernetes use `/api/kubernetes/status` for workload information.
+Overview and Deployments use `/api/kubernetes/status` for workload information.
 The endpoint now adds replica counts, deployment revision, bounded pod diagnostics,
 and optional live ArgoCD sync/health metadata. An ArgoCD read failure leaves workload
 data available and renders ArgoCD as unavailable. Pod readiness does not imply
 ArgoCD health, and zero desired replicas are never labelled a healthy running workload.
 
-Security explicitly reports missing CI evidence; it does not turn a passing CI run
-into a vulnerability verdict. No scan-results API is currently connected.
+Security reads the exact release run’s Trivy artifacts through
+`GET /api/security/releases/:id`. It displays a policy banner, severity summaries,
+architecture cards, scan times, vulnerability fixes, and expandable provenance.
+A passing CI run alone does not substitute for validated scan reports.
 
-Monitoring optionally reads `GET /api/monitoring/status`. The supported response is
-`{ "services": [{ "name": "Prometheus", "status": "up", "url": "http://127.0.0.1:9090" }] }`.
-Status must be `up`, `down`, or `unknown`; URLs are optional, and only HTTP(S)
-loopback links without embedded credentials are rendered. This is an integration
-contract, not a simulated monitoring backend. The existing backend returns 404
-until monitoring is separately implemented. No metrics or charts are fabricated.
+Monitoring reads `GET /api/monitoring/status` every 30 seconds and on manual
+refresh. It provides service reachability, Prometheus scrape targets, available
+replicas, health/readiness probes, 30-minute availability and probe-latency trends,
+and active alerts. Missing series are unavailable, never fabricated zeros.
+Probe latency is not application request latency. Optional HTTP(S) links must be
+loopback URLs without embedded credentials.
+
+The backend needs local access to the running monitoring services. From the
+repository root, run each needed forward in a separate terminal:
+
+```sh
+kubectl --context docker-desktop -n deployforge-monitoring port-forward --address 127.0.0.1 svc/prometheus 9090:9090
+kubectl --context docker-desktop -n deployforge-monitoring port-forward --address 127.0.0.1 svc/grafana 3000:3000
+kubectl --context docker-desktop -n deployforge-monitoring port-forward --address 127.0.0.1 svc/alertmanager 9093:9093
+```
+
+Stop each with Ctrl+C. No pod restart is needed when only a forward stopped.
+If charts are empty, first check `kubectl --context docker-desktop get pods,svc -n
+deployforge-monitoring`, the listeners on 9090/3000/9093, then
+`curl -fsS http://127.0.0.1:3001/api/monitoring/status`. Refresh the UI after recovery.
+A healthy in-cluster service may still be unreachable from the Mac when its
+forward is absent. Avoid starting unneeded services on an 8 GB machine.
 
 Read-only live visual verification:
 
@@ -199,3 +218,41 @@ No token entry or separate review card is present. All buttons are interactive;
 validation, authorization, and duplicate-submission guards remain enforced by
 handlers and the backend. Missing prerequisites produce an inline explanation.
 The running backend mode is reported accurately; this UI does not enable execution.
+
+### Progress stage destinations
+
+Deployment stages link to read-only operation status and the pushed GitOps commit.
+Sync, rollout and health stages open corresponding live Overview sections.
+Create Release retains tag, exact Actions run and GHCR evidence links.
+To open ArgoCD directly from sync and release rollout stages, set the public
+browser base URL `VITE_ARGOCD_URL` in `dashboard/.env.local` and restart Vite.
+Use your actual ArgoCD address; links target `/applications/argocd/deployforge`.
+HTTPS is supported; HTTP is limited to loopback hosts. Do not put credentials
+in this URL. A link does not start a port-forward or initiate synchronization.
+
+### Security reports
+
+Security reads existing release reports via `GET /api/security/releases/:id`.
+The server-side GitHub token needs Actions read access to the registered repository.
+No new credential or workflow permission is required beyond existing release setup.
+Reports are pinned to the exact run attempt, source SHA, tag, configured workflow,
+platform image name and SHA-256 artifact checksum. Signed artifact redirects never
+receive the GitHub credential. Downloads and expanded JSON are bounded; archives
+are parsed in memory, never extracted. Complete reports are cached for 60 seconds.
+
+The page displays HIGH/CRITICAL policy results, findings and fixes per architecture,
+report timestamps where present, source commit, verified release index digest and
+platform image identities. Existing Trivy reports are severity-filtered by CI;
+reported counts do not represent a complete inventory of lower-severity issues.
+Absent, expired, invalid or unreadable evidence is unknown, never clean. A policy
+passes only when both reports have no HIGH/CRITICAL findings and both actual
+Security policy steps succeeded. Findings are capped at 500 displayed rows per
+architecture, with complete counts retained and full artifacts available in Actions.
+The Security page is read-only and cannot start a scan or a deployment.
+
+### UI screenshots
+
+Current portfolio screenshots are in [Security](../docs/images/security-dashboard.png)
+and [Monitoring](../docs/images/monitoring-dashboard.png). Captures use read-only
+API requests, block deployment writes, and do not include credentials or Settings
+connection codes. They are documentation assets, not dashboard fixtures.

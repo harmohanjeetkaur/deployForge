@@ -21,7 +21,7 @@ test('live control center displays actual workload and ArgoCD metadata with GET-
   await expect(page.getByRole('link', { name: 'Kubernetes', exact: true })).toHaveCount(0)
   await expect(page.locator('.pod-card')).toHaveCount(live.pods.length)
   await page.getByRole('link', { name: 'Security', exact: true }).click()
-  await expect(page.getByText('Security results unavailable')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Security', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Monitoring', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Monitoring backend is not configured')
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()

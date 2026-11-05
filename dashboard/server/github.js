@@ -7,8 +7,9 @@ export class GitHubError extends Error {
 const enc = encodeURIComponent;
 const sha = value => /^[a-f0-9]{40}$/.test(value);
 // Parse only a bounded release.json entry; never extract archive paths to disk.
-export function releaseEvidenceFromZip(bytes) {
-  if (bytes.length > 1024 * 1024) throw new Error('Release evidence is too large');
+export function releaseEvidenceFromZip(bytes) { return jsonArtifactFromZip(bytes); }
+export function jsonArtifactFromZip(bytes, filename = 'release.json', maxArchive = 1024 * 1024, maxJson = 65536) {
+  if (bytes.length > maxArchive) throw new Error('Release evidence is too large');
   let end = -1;
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (bytes.readUInt32LE(i) === 0x06054b50) { end = i; break; }
   if (end < 0) throw new Error('Invalid release evidence archive');
@@ -21,20 +22,20 @@ export function releaseEvidenceFromZip(bytes) {
     const size = bytes.readUInt32LE(offset + 20), expanded = bytes.readUInt32LE(offset + 24);
     const length = bytes.readUInt16LE(offset + 28), extra = bytes.readUInt16LE(offset + 30), comment = bytes.readUInt16LE(offset + 32);
     const name = bytes.subarray(offset + 46, offset + 46 + length).toString();
-    if (name === 'release.json') {
-      if (result || flags & 1 || expanded > 65536 || ![0, 8].includes(method)) throw new Error('Unsafe release evidence');
+    if (name === filename) {
+      if (result || flags & 1 || expanded > maxJson || ![0, 8].includes(method)) throw new Error('Unsafe release evidence');
       const local = bytes.readUInt32LE(offset + 42);
       if (bytes.readUInt32LE(local) !== 0x04034b50) throw new Error('Invalid evidence entry');
       const start = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
       if (start + size > bytes.length) throw new Error('Truncated evidence entry');
       const packed = bytes.subarray(start, start + size);
-      const content = method === 8 ? inflateRawSync(packed, { maxOutputLength: 65536 }) : packed;
+      const content = method === 8 ? inflateRawSync(packed, { maxOutputLength: maxJson }) : packed;
       if (content.length !== expanded) throw new Error('Invalid evidence size');
       result = JSON.parse(content.toString());
     }
     offset += 46 + length + extra + comment;
   }
-  if (!result) throw new Error('release.json is missing');
+  if (!result) throw new Error(`${filename} is missing`);
   return result;
 }
 
@@ -52,6 +53,22 @@ export function createGitHub({ token, fetcher = fetch, workflowDigest } = {}) {
   }
   const base = r => `/repos/${enc(r.owner)}/${enc(r.repo)}`;
   const json = async path => (await request(path)).json();
+  async function downloadArtifact(r, artifact, limit = 1024 * 1024) {
+      const response = await request(`${base(r)}/actions/artifacts/${artifact.id}/zip`, { redirect: 'manual' });
+      let download = response;
+      if (response.status === 302) {
+        const url = new URL(response.headers.get('location'));
+        if (url.protocol !== 'https:' || url.username || url.password || !(url.hostname.endsWith('.blob.core.windows.net') || url.hostname.endsWith('.actions.githubusercontent.com'))) throw new Error('Unexpected artifact download host');
+        // Signed storage redirect receives no GitHub Authorization header.
+        download = await fetcher(url.href, { redirect: 'error', signal: AbortSignal.timeout(15000) });
+      }
+      if (!download.ok) throw new Error('Unable to download release evidence');
+      const chunks = []; let size = 0;
+      for await (const chunk of download.body) { size += chunk.length; if (size > limit) throw new Error('Release evidence is too large'); chunks.push(chunk); }
+      const bytes = Buffer.concat(chunks);
+      if (!/^sha256:[a-f0-9]{64}$/.test(artifact.digest || '') || `sha256:${createHash('sha256').update(bytes).digest('hex')}` !== artifact.digest) throw new Error('Release evidence archive digest mismatch');
+      return bytes;
+  }
   return {
     async source(r, ref) {
       if (typeof ref !== 'string' || ref.length > 200 || !ref || /\s/.test(ref) || [...ref].some(c => c.charCodeAt(0) < 32)) throw Object.assign(new Error('Enter a branch or full commit SHA'), { statusCode: 400 });
@@ -88,24 +105,33 @@ export function createGitHub({ token, fetcher = fetch, workflowDigest } = {}) {
       return { id: run.id, attempt: run.run_attempt, url: `https://github.com/${r.owner}/${r.repo}/actions/runs/${run.id}`,
         status: run.status, conclusion: run.conclusion, jobs: jobs.jobs.map(j => ({ name: j.name, conclusion: j.conclusion, steps: (j.steps || []).map(s => ({ name: s.name, conclusion: s.conclusion })) })) };
     },
+    async securityReports(r, release) {
+      const run = release.run;
+      if (!Number.isSafeInteger(run?.id) || run.id < 1 || !Number.isSafeInteger(run.attempt) || run.attempt < 1 || !sha(release.sha)) throw new Error('Release workflow has not been discovered');
+      const actual = await json(`${base(r)}/actions/runs/${run.id}/attempts/${run.attempt}`);
+      const fullName = `${r.owner}/${r.repo}`.toLowerCase();
+      if (actual.id !== run.id || actual.run_attempt !== run.attempt || actual.head_sha !== release.sha || actual.head_branch !== release.tag
+        || actual.event !== 'push' || actual.repository?.full_name?.toLowerCase() !== fullName
+        || actual.head_repository?.full_name?.toLowerCase() !== fullName || actual.path?.split('@')[0] !== `.github/workflows/${r.workflow}`) throw new Error('Security workflow provenance mismatch');
+      const jobs = await json(`${base(r)}/actions/runs/${run.id}/attempts/${run.attempt}/jobs?per_page=100`);
+      const data = await json(`${base(r)}/actions/runs/${run.id}/artifacts?per_page=100`);
+      return Promise.all(['amd64', 'arm64'].map(async arch => {
+        const found = data.artifacts.filter(a => a.name === `security-${run.id}-${run.attempt}-${arch}`);
+        if (!found.length || found[0].expired) return { arch, status: 'unavailable', message: 'Report missing or expired' };
+        if (found.length !== 1 || found[0].size_in_bytes > 8 * 1024 * 1024) throw new Error('Ambiguous or oversized security evidence');
+        const bytes = await downloadArtifact(r, found[0], 8 * 1024 * 1024);
+        const report = jsonArtifactFromZip(bytes, `trivy-${arch}.json`, 8 * 1024 * 1024, 16 * 1024 * 1024);
+        const job = jobs.jobs.find(j => j.name === `Build and scan (${arch})`);
+        const scan = job?.steps?.find(step => step.name === 'Security policy');
+        return { arch, status: 'available', scanConclusion: scan?.conclusion || null, report };
+      }));
+    },
     async evidence(r, run) {
       const data = await json(`${base(r)}/actions/runs/${run.id}/artifacts?per_page=100`);
       const found = data.artifacts.filter(a => a.name === `release-evidence-${run.id}-${run.attempt}` && !a.expired);
       if (found.length !== 1 || found[0].size_in_bytes > 1024 * 1024) throw new Error('CI release evidence missing, expired or ambiguous');
       const artifact = found[0];
-      const response = await request(`${base(r)}/actions/artifacts/${artifact.id}/zip`, { redirect: 'manual' });
-      let download = response;
-      if (response.status === 302) {
-        const url = new URL(response.headers.get('location'));
-        if (url.protocol !== 'https:' || url.username || url.password || !(url.hostname.endsWith('.blob.core.windows.net') || url.hostname.endsWith('.actions.githubusercontent.com'))) throw new Error('Unexpected artifact download host');
-        // Signed storage redirect receives no GitHub Authorization header.
-        download = await fetcher(url.href, { redirect: 'error', signal: AbortSignal.timeout(15000) });
-      }
-      if (!download.ok) throw new Error('Unable to download release evidence');
-      const chunks = []; let size = 0;
-      for await (const chunk of download.body) { size += chunk.length; if (size > 1024 * 1024) throw new Error('Release evidence is too large'); chunks.push(chunk); }
-      const bytes = Buffer.concat(chunks);
-      if (!/^sha256:[a-f0-9]{64}$/.test(artifact.digest || '') || `sha256:${createHash('sha256').update(bytes).digest('hex')}` !== artifact.digest) throw new Error('Release evidence archive digest mismatch');
+      const bytes = await downloadArtifact(r, artifact);
       return releaseEvidenceFromZip(bytes);
     },
   };

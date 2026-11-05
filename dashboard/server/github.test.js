@@ -8,8 +8,8 @@ import { verifyImageTag } from './registry.js';
 const repo = repositories[0], sha = 'a'.repeat(40), token = 'test-server-secret';
 const workflow = Buffer.from('reviewed workflow'), workflowDigest = createHash('sha256').update(workflow).digest('hex');
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
-function archive(value) {
-  const content = Buffer.from(JSON.stringify(value)), packed = deflateRawSync(content), name = Buffer.from('release.json');
+function archive(value, filename = 'release.json') {
+  const content = Buffer.from(JSON.stringify(value)), packed = deflateRawSync(content), name = Buffer.from(filename);
   const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50); local.writeUInt16LE(8, 8); local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(content.length, 22); local.writeUInt16LE(name.length, 26);
   const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50); central.writeUInt16LE(8, 10); central.writeUInt32LE(packed.length, 20); central.writeUInt32LE(content.length, 24); central.writeUInt16LE(name.length, 28);
   const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(central.length + name.length, 12); end.writeUInt32LE(local.length + name.length + packed.length, 16);
@@ -89,4 +89,24 @@ test('strict registry verification hashes the actual manifest rather than trusti
     const result = await verifyImageTag(sha, async () => new Response(body, { headers: { 'docker-content-digest': header } }), true);
     assert.equal(result.exists, header === correct); if (result.exists) assert.equal(result.digest, correct);
   }
+});
+
+test('security artifacts pin run, attempt, architecture and checksum without forwarding credentials', async () => {
+  const release = { sha, tag: 'v1.2.0', run: { id: 123, attempt: 2 } };
+  const zips = Object.fromEntries(['amd64','arm64'].map(arch => [arch, archive({ ArtifactName: arch }, `trivy-${arch}.json`)]));
+  const client = createGitHub({ token, fetcher: async (url, options) => {
+    if (url.includes('/attempts/2/jobs')) return json({ jobs: ['amd64','arm64'].map(arch => ({ name: `Build and scan (${arch})`, steps: [{ name: 'Security policy', conclusion: 'success' }] })) });
+    if (url.includes('/attempts/2')) return json({ id: 123, run_attempt: 2, head_sha: sha, head_branch: release.tag, event: 'push', path: '.github/workflows/ci.yaml', repository: { full_name: 'harmohanjeetkaur/deployForge' }, head_repository: { full_name: 'harmohanjeetkaur/deployForge' } });
+    if (url.includes('/runs/123/artifacts')) return json({ artifacts: ['amd64','arm64'].map((arch,i) => ({ id: i+1, name: `security-123-2-${arch}`, size_in_bytes: zips[arch].length, digest: `sha256:${createHash('sha256').update(zips[arch]).digest('hex')}` })) });
+    if (url.includes('/artifacts/')) return new Response(null, { status: 302, headers: { Location: `https://results.blob.core.windows.net/${url.includes('/1/') ? 'amd64' : 'arm64'}` } });
+    assert.equal(options.headers, undefined);
+    return new Response(zips[url.endsWith('amd64') ? 'amd64' : 'arm64']);
+  } });
+  const result = await client.securityReports(repo, release);
+  assert.deepEqual(result.map(r => r.arch), ['amd64','arm64']);
+  assert.ok(result.every(r => r.scanConclusion === 'success'));
+});
+test('security evidence refuses a foreign run before downloading artifacts', async () => {
+  const client = createGitHub({ token, fetcher: async () => json({ id: 123, run_attempt: 2, head_sha: 'b'.repeat(40) }) });
+  await assert.rejects(client.securityReports(repo, { sha, tag: 'v1.2.0', run: { id:123,attempt:2 } }), /provenance/);
 });

@@ -895,3 +895,60 @@ button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
   .release-progress-steps .release-step-title, .release-progress-steps strong, .release-progress-steps small { grid-column: 2; }
   .release-history .stacked-facts { grid-template-columns: 1fr; gap: 16px; }
 }
+
+.security-platforms { display: grid; gap: 20px; margin-top: 24px; }
+.security-table-wrap { overflow-x: auto; }
+.security-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.security-table th, .security-table td { padding: 12px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+.security-table small { display: block; color: #64748b; margin-top: 5px; }
+.security-workspace .version-select { margin: 12px 0 24px; }
+
+/* Security evidence workspace */
+.security-workspace { max-width: 1480px; margin: 0 auto; }
+.security-workspace .page-heading { align-items: center; margin-bottom: 26px; }
+.security-subtitle { color: #75849c; font-size: 14px; margin: 10px 0 0; }
+.security-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 20px 24px; margin-bottom: 22px; }
+.security-selector { width: min(100%, 620px); min-width: 0; }
+.security-selector label { display: block; font-size: 11px; font-weight: 650; color: #71819a; margin-bottom: 8px; }
+.security-workspace .version-select { width: 100%; margin: 0; background: #f8fafd; border: 1px solid #dce4ef; font-size: 13px; padding: 11px 14px; border-radius: 7px; color: #263c5c; }
+.security-scanner { display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
+.security-scanner strong { display: block; font-size: 13px; color: #2e4160; }
+.security-scanner span:not(.security-scanner-dot) { display: block; font-size: 11px; color: #8290a6; margin-top: 4px; }
+.security-scanner-dot { width: 8px; height: 8px; border-radius: 50%; background: #4d73dc; box-shadow: 0 0 0 5px #eef2fd; }
+.security-summary { display: flex; align-items: center; gap: 17px; padding: 25px 28px; border: 1px solid #dbe7e2; border-radius: 12px; background: #f3faf6; margin-bottom: 20px; }
+.security-result-icon { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 12px; color: #20845b; border: 1px solid #c9e6d7; background: #e3f3e9; font-size: 24px; }
+.security-summary-copy { flex: 1; min-width: 0; }
+.security-overline { font-size: 10px; letter-spacing: 1.5px; font-weight: 650; color: #668774; margin: 0 0 8px; }
+.security-summary h3 { font-size: 20px; color: #234c3b; margin: 0 0 7px; font-weight: 650; }
+.security-summary-copy > p:last-child { font-size: 12px; color: #668273; margin: 0; line-height: 1.6; }
+.security-fail { background: #fff7f5; border-color: #f0d8d2; }.security-fail h3 { color: #8f3933; }.security-fail .security-result-icon { color: #bd4e41; background: #fde9e5; border-color: #efcdc6; }.security-fail .security-summary-copy p { color: #9b6e66; }
+.security-unknown { background: #f7f9fc; border-color: #dde5f0; }.security-unknown h3 { color: #3d5276; }.security-unknown .security-result-icon { color: #62779d; background: #edf1f8; border-color: #d8e1ed; }.security-unknown .security-summary-copy p { color: #73819b; }
+.security-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 30px; }
+.security-metrics article { position: relative; border: 1px solid #dfe6ef; border-radius: 10px; padding: 19px 22px; background: white; }
+.security-metrics article > .severity-dot { position: absolute; right: 22px; top: 23px; }
+.security-metrics p { margin: 0 0 13px; color: #70809a; font-size: 12px; }.security-metrics strong { display: block; font-size: 30px; color: #233955; font-weight: 600; letter-spacing: -1px; }
+.security-metrics strong span { font-size: 17px; color: #98a5b8; letter-spacing: 0; }.security-metrics small { display: block; margin-top: 8px; font-size: 10px; color: #8996aa; }
+.severity-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #9aa8bd; flex-shrink: 0; }.severity-dot.critical { background: #da646c; }.severity-dot.high { background: #e5a066; }.severity-dot.medium { background: #d4b862; }.severity-dot.low { background: #7499d5; }.severity-dot.coverage { background: #617ddb; }
+.security-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }.security-section-heading h3 { margin: 0; font-size: 16px; color: #2c405f; }.security-section-heading p { margin: 7px 0 0; font-size: 12px; color: #8190a5; }
+.security-run-link { color: #4664b9; font-size: 12px; font-weight: 550; text-decoration: none; }.security-run-link:hover { text-decoration: underline; }
+.security-platforms { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 0 0 20px; }
+.security-platform { padding: 23px; min-width: 0; margin: 0; }
+.security-platform-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 23px; }.security-platform-name { display: flex; gap: 11px; align-items: center; }.security-platform-name h3 { margin: 0; font-size: 15px; }.security-platform-name p { margin: 5px 0 0; color: #8b98ac; font-size: 11px; }
+.security-arch-icon { display: grid; place-items: center; height: 36px; width: 36px; background: #f0f3f9; color: #7184a6; border-radius: 9px; font-size: 23px; }
+.security-severities { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #e8edf4; border-radius: 8px; padding: 13px 0; margin-bottom: 18px; }
+.security-severities > div { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 5px; border-right: 1px solid #e8edf4; font-size: 10px; color: #7d8ba1; }.security-severities > div:last-child { border: 0; }.security-severities strong { flex-basis: 100%; text-align: center; margin-top: 3px; font-size: 21px; font-weight: 550; color: #344a69; }
+.security-findings-note { display: flex; gap: 11px; padding: 14px; background: #f4faf6; border-radius: 7px; margin-bottom: 18px; color: #29805a; }.security-findings-note > span { font-size: 17px; }.security-findings-note strong { font-size: 12px; font-weight: 600; }.security-findings-note p { font-size: 10px; line-height: 1.6; margin: 5px 0 0; color: #7d9688; }.security-findings-note.has-findings { background: #fff7f0; color: #9c682d; }.security-findings-note.has-findings p { color: #9b8a76; }
+.security-scan-time { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; color: #8a97aa; padding-bottom: 17px; }.security-scan-time time { color: #63758f; text-align: right; }
+.security-identity { border-top: 1px solid #e9edf4; padding-top: 14px; font-size: 11px; color: #7d8da5; }.security-identity summary { cursor: pointer; }.security-identity p { line-height: 1.7; }.security-identity code { font-size: 10px; }
+.security-evidence { margin: 0 0 16px; padding: 18px 22px; }.security-evidence summary { cursor: pointer; color: #4d617f; font-size: 12px; }.security-evidence summary span { font-weight: 600; }.security-evidence summary small { color: #8b99ad; margin-left: 14px; font-size: 11px; }.security-evidence dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }.security-evidence code { font-size: 11px; }
+.security-policy-note { display: flex; gap: 10px; color: #8c9aaf; padding: 0 4px; }.security-policy-note p { margin: 0; font-size: 10px; line-height: 1.8; }.security-policy-note strong { font-weight: 600; color: #72839e; }
+.security-platform-empty { font-size: 12px; padding: 18px 0; }.security-state { font-size: 13px; color: #7b89a0; padding: 28px; }
+.security-severity-label { display: inline-block; padding: 4px 7px; border-radius: 4px; background: #f3f5f9; font-size: 9px; font-weight: 650; }.security-severity-label.high { background: #fff0df; color: #a57030; }.security-severity-label.critical { background: #fdebed; color: #bb4d57; }
+@media (max-width: 1100px) { .security-platforms { grid-template-columns: 1fr; }.security-summary { flex-wrap: wrap; }.security-summary-copy { flex-basis: calc(100% - 70px); }.security-summary > .health-badge { margin-left: 61px; } }
+@media (max-width: 600px) {
+  .security-workspace .page-heading { align-items: flex-start; }.security-toolbar { padding: 17px; flex-direction: column; align-items: stretch; gap: 16px; }.security-scanner { display: none; }
+  .security-summary { padding: 20px 17px; gap: 12px; }.security-result-icon { width: 35px; height: 35px; font-size: 20px; }.security-summary h3 { font-size: 17px; }.security-summary > .health-badge { margin-left: 47px; }
+  .security-metrics { gap: 8px; margin-bottom: 24px; }.security-metrics article { padding: 15px 10px; }.security-metrics p { font-size: 10px; padding-right: 8px; }.security-metrics article > .severity-dot { right: 9px; top: 18px; width: 5px; height: 5px; }.security-metrics strong { font-size: 26px; }.security-metrics small { font-size: 9px; line-height: 1.5; }
+  .security-section-heading { align-items: flex-start; flex-direction: column; }.security-platform { padding: 17px; }.security-platform-heading .health-badge { font-size: 10px; }.security-platform-name h3 { font-size: 13px; }.security-severities > div { font-size: 9px; gap: 3px; }.security-severities .severity-dot { width: 5px; height: 5px; }
+  .security-evidence dl { grid-template-columns: 1fr; }.security-evidence summary small { display: block; margin: 8px 0 0 15px; }
+}

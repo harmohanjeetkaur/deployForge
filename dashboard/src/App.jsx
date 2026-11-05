@@ -62,11 +62,12 @@ function App() {
     return () => { clearInterval(interval); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', onVisible); configurationController.current?.abort(); configRef.current++; requestRef.current++; controllerRef.current?.abort() }
   }, [])
 
-  const navigate = page => {
+  const navigate = (page, section) => {
     setPreflightError(null)
     fetchDeploymentConfig()
     if (page !== 'deployments') setShowDeployConfirm(false)
     setCurrentPage(page)
+    if (section) requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: 'start' })))
   }
 
   // Image candidates are verified against GHCR before either operation.
@@ -459,7 +460,7 @@ function App() {
         {currentPage === 'overview' && <Overview data={k8sData} loading={loading} error={error} history={history} lastOperation={lastOperation} config={backendConfig} configError={configError} onRefresh={() => { fetchKubernetesStatus(); fetchDeploymentHistory(); fetchDeploymentConfig() }} onNavigate={navigate} />}
 
         {currentPage === 'deployments' && <DeploymentWorkspace
-          data={k8sData} selected={selectedVersion} images={availableImages}
+          data={k8sData} selected={selectedVersion} images={availableImages} onNavigate={navigate}
           history={history} historyLoading={historyLoading} historyError={historyError} releaseImagesError={releaseImagesError}
           verification={verificationResult} verifying={verifying} busy={deploying}
           candidateTag={candidateTag}

@@ -1,3 +1,5 @@
+import StageLink from './StageLink.jsx'
+import { argoApplicationUrl } from './stage-links.js'
 import { releaseLinks } from './release-links.js'
 
 const stages = [
@@ -30,14 +32,12 @@ export default function ReleaseProgress({ release, repository, onNavigate }) {
         const problem = (failed || review) && current === i
         const done = !problem && (healthy || complete[i])
         const active = !done && !problem && current === i
-        const href = stage.link && (i !== 0 || complete[0] || healthy) ? links[stage.link] : null
+        const href = i === 4 ? argoApplicationUrl(import.meta.env.VITE_ARGOCD_URL) : stage.link && (i !== 0 || complete[0] || healthy) ? links[stage.link] : null
         const status = problem ? review ? 'Review required' : 'Failed' : done ? 'Complete'
           : active ? i === 1 && !release.run ? 'Waiting for workflow' : 'In progress' : 'Waiting'
         return <li key={stage.title} className={problem ? 'step-failed' : done ? 'step-complete' : active ? 'step-active' : ''} aria-current={active ? 'step' : undefined}>
           <span className="step-marker" aria-hidden="true">{problem ? '!' : done ? '✓' : i + 1}</span>
-          {href ? <a className="release-step-title" href={href} target="_blank" rel="noopener noreferrer" title={i === 1 && !links.run ? 'Find the tag workflow while its run is discovered' : stage.hint}>{stage.title}<span aria-hidden="true">↗</span></a>
-            : i === 4 && onNavigate ? <button className="release-step-title" type="button" onClick={() => onNavigate('overview')} title={stage.hint}>{stage.title}<span aria-hidden="true">→</span></button>
-              : <strong>{stage.title}</strong>}
+          <StageLink title={stage.title} href={href} onNavigate={onNavigate} section={i === 4 ? 'workload-instances' : null} hint={i === 1 && !links.run ? 'Find the tag workflow while its run is discovered' : stage.hint} />
           <small>{status}</small>
         </li>
       })}

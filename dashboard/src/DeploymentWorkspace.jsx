@@ -1,3 +1,5 @@
+import StageLink from './StageLink.jsx'
+import { argoApplicationUrl, deploymentStageLinks } from './stage-links.js'
 import ExecutionStatus from './ExecutionStatus.jsx'
 import { executionState } from './execution-state.js'
 
@@ -15,11 +17,13 @@ export default function DeploymentWorkspace({
   busy, candidateTag, setCandidateTag, candidateError, operation,
   phase, result, error, blockers, rollbackBlocker, eligibility,
   environment, executionConfig, configError, configCheckedAt, onRefreshConfig, lastOperation, onSelect, onRefresh, onUseTag, onVerify,
-  onRequest, onSelectRollback, formatTimestamp, onMode, preflightError
+  onRequest, onSelectRollback, formatTimestamp, onMode, preflightError, onNavigate
 }) {
   const execution = executionState(executionConfig, configError)
   const verified = verification?.valid && verification?.exists && verification?.platformsSupported
   const displayedResult = phase !== 'idle' ? result : result || lastOperation
+  const links = deploymentStageLinks(displayedResult)
+  const argoUrl = argoApplicationUrl(import.meta.env.VITE_ARGOCD_URL)
   const displayedPhase = phase !== 'idle' ? phase : lastOperation?.state || phase
   const label = (phase !== 'idle' ? operation : displayedResult?.operation || operation) === 'rollback' ? 'Rollback' : 'Deployment'
   const status = { idle: 'Ready', submitting: 'Submitting request', 'authorization-error': 'Authorization required', requested: `${label} requested`, 'in-progress': `${label} in progress`, succeeded: `${label} healthy`, failed: `${label} failed` }[displayedPhase] || 'Ready'
@@ -57,8 +61,8 @@ export default function DeploymentWorkspace({
       </section>
       <section className="release-card deployment-progress" aria-label="Deployment progress"><div className="release-card-heading"><h3>Deployment Progress</h3><span role="status" aria-live="polite" className={`release-pill ${displayedPhase === 'succeeded' ? 'is-good' : ['failed', 'authorization-error'].includes(displayedPhase) ? 'is-failed' : 'is-muted'}`}>{status}</span></div>
         <p className="release-hint">{displayedResult ? `Last ${displayedResult.operation || 'deployment'} · ${displayedResult.startedAt ? formatTimestamp(displayedResult.startedAt) : 'Timestamp unavailable from this backend'}` : 'No operation reported by this backend process.'}</p>
-        <ol className="progress-steps">{steps.map(([key, title, stage], index) => {const done = displayedResult?.progress?.[key] === true; const failed = displayedPhase === 'failed' && (displayedResult?.failureStage === stage || (!displayedResult?.failureStage && index === 0)); const active = !done && !failed && displayedResult?.stage === stage; return <li key={key} className={done ? 'step-complete' : failed ? 'step-failed' : active ? 'step-active' : ''}><span className="step-marker">{done ? '✓' : failed ? '!' : index + 1}</span><strong>{title}</strong><small>{done ? 'Complete' : failed ? 'Failed' : active ? 'In progress' : displayedResult ? 'Waiting' : 'Not started'}</small></li>})}</ol>
-        {displayedResult?.commit && <p className="commit-reference">GitOps commit <code>{displayedResult.commit}</code>{displayedResult.pushed ? ' · pushed to origin/main' : ' · push pending'}</p>}
+        <ol className="progress-steps release-progress-steps">{steps.map(([key, title, stage], index) => {const done = displayedResult?.progress?.[key] === true; const failed = displayedPhase === 'failed' && (displayedResult?.failureStage === stage || (!displayedResult?.failureStage && index === 0)); const active = !done && !failed && displayedResult?.stage === stage; return <li key={key} className={done ? 'step-complete' : failed ? 'step-failed' : active ? 'step-active' : ''}><span className="step-marker">{done ? '✓' : failed ? '!' : index + 1}</span><StageLink title={title} href={index === 0 ? links.request : index === 1 ? links.commit : index === 2 ? argoUrl : null} section={index === 2 ? 'gitops-reconciliation' : index === 3 ? 'workload-instances' : index === 4 ? 'platform-health' : null} onNavigate={onNavigate} hint={index === 0 ? 'View this operation status (read-only)' : index === 1 ? 'View the pushed GitOps commit' : index === 2 ? 'View ArgoCD application synchronization' : index === 3 ? 'Inspect live Kubernetes pods' : 'Inspect live readiness and health'} /><small>{done ? 'Complete' : failed ? 'Failed' : active ? 'In progress' : displayedResult ? 'Waiting' : 'Not started'}</small></li>})}</ol>
+        {displayedResult?.commit && <p className="commit-reference">GitOps commit <>{links.commit ? <a href={links.commit} target="_blank" rel="noopener noreferrer"><code>{displayedResult.commit}</code></a> : <code>{displayedResult.commit}</code>}</>{displayedResult.pushed ? ' · pushed to origin/main' : ' · push pending'}</p>}
         {displayedResult?.observation && <p className="release-hint">ArgoCD: {displayedResult.observation.argoSynced ? 'Synced at target commit' : 'Synchronization pending'} · Ready replicas: {displayedResult.observation.readyReplicas ?? 0}/{displayedResult.observation.desiredReplicas ?? 0}</p>}
         {error && <div className="preview-error" role="alert">{error}</div>}
         {!error && displayedResult?.state === 'failed' && <div className="preview-error" role="alert">{displayedResult.message || 'The last operation failed; inspect Git and cluster state before retrying.'}</div>}
