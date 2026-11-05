@@ -877,7 +877,21 @@ button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
 .release-form .btn { justify-self: start; }
 .release-history { display: grid; gap: 20px; }
 .release-wrap, .release-wrap dd { overflow-wrap: anywhere; min-width: 0; }
-.release-steps { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-left: 24px; color: #64748b; }
-.release-steps .complete { color: #16835c; }
-.release-steps [aria-current=step] { font-weight: 700; color: #3158b3; }
-@media (max-width: 600px) { .release-steps { display: grid; gap: 8px; } .release-form .btn { width: 100%; } }
+@media (max-width: 600px) { .release-form .btn { width: 100%; } }
+
+.release-progress { border-top: 1px solid #e1e7f0; margin-top: 18px; padding-top: 20px; }
+.release-progress h4 { font-size: 16px; font-weight: 650; color: #253b60; margin: 0; }
+.release-progress-steps { margin: 0 0 18px; }
+.release-progress-steps li { min-width: 0; }
+.release-step-title { display: inline-flex; align-items: center; align-self: flex-start; gap: 5px; max-width: 100%; padding: 0; background: none; border: 0; color: inherit; font: inherit; font-weight: 650; line-height: 1.5; text-align: left; text-decoration: none; cursor: pointer; }
+.release-step-title:hover { text-decoration: underline; text-underline-offset: 4px; }
+.release-step-title:focus-visible { outline: 2px solid #3c5ed7; outline-offset: 4px; border-radius: 3px; }
+.release-step-title span { flex-shrink: 0; }
+.release-history .stacked-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 32px; }
+.release-history .stacked-facts > div { min-width: 0; }
+@media (max-width: 760px) {
+  .release-progress-steps li { grid-template-columns: 28px minmax(0, 1fr); column-gap: 12px; row-gap: 4px; }
+  .release-progress-steps .step-marker { grid-row: 1 / span 2; }
+  .release-progress-steps .release-step-title, .release-progress-steps strong, .release-progress-steps small { grid-column: 2; }
+  .release-history .stacked-facts { grid-template-columns: 1fr; gap: 16px; }
+}

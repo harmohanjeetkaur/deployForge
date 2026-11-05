@@ -412,8 +412,8 @@ function App() {
           <div className="brand-mark" aria-hidden="true">DF</div><h2>DeployForge</h2><p>PLATFORM CONTROL</p>
         </div>
         <nav className="sidebar-nav" aria-label="Workspace navigation">
-          <a href="#" aria-current={currentPage === 'releases' ? 'page' : undefined} className={`nav-item ${currentPage === 'releases' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('releases') }}>Create Release</a>
           <a href="#" aria-current={currentPage === 'overview' ? 'page' : undefined} className={`nav-item ${currentPage === 'overview' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('overview') }}>Overview</a>
+          <a href="#" aria-current={currentPage === 'releases' ? 'page' : undefined} className={`nav-item ${currentPage === 'releases' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('releases') }}>Create Release</a>
           <a href="#" aria-current={currentPage === 'deployments' ? 'page' : undefined} className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('deployments') }}>Deployments</a>
           <a href="#" aria-current={currentPage === 'security' ? 'page' : undefined} className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('security') }}>Security</a>
           <a href="#" aria-current={currentPage === 'monitoring' ? 'page' : undefined} className={`nav-item ${currentPage === 'monitoring' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('monitoring') }}>Monitoring</a>
@@ -454,7 +454,7 @@ function App() {
           onSelectRollback={entry => { if (changeSelectedVersion(entry) !== false) { setOperation('rollback'); document.getElementById('version-select')?.focus() } }}
         />}
 
-        {currentPage === 'releases' && <CreateRelease session={session} onAuthorizationError={rejectSession} />}
+        {currentPage === 'releases' && <CreateRelease session={session} onAuthorizationError={rejectSession} onNavigate={navigate} />}
         {currentPage === 'security' && <SecurityPage />}
         {currentPage === 'monitoring' && <MonitoringPage />}
 

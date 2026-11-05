@@ -22,6 +22,8 @@ to that IPv4 address. Restart the API after changing backend source.
 
 ## Release workflow
 
+Failed releases and releases awaiting review remain in history but do not block a new version. Running releases, deployments and rollbacks remain mutually exclusive. Retrying a review-required release performs read-only reconciliation and never repeats its Git writes. New releases still require the existing Git preflight checks to pass.
+
 **Create Release** provides the one-click **Create Tag & Deploy** workflow for
 registered repositories. It resolves a branch/full SHA, creates a version tag,
 tracks the exact Actions run, verifies CI evidence and the GHCR digest, and

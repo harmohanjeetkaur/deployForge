@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test'
 import { handleSession, executionConfig, setSession } from './ui-fixtures.js'
 const sha = 'a'.repeat(40), digest = `sha256:${'d'.repeat(64)}`
-const repository = { id: 'deployforge', name: 'DeployForge', owner: 'harmohanjeetkaur', repo: 'deployForge', environment: 'docker-desktop', namespace: 'deployforge-gitops' }
-async function mock(page, { enabled = true, failure = false } = {}) {
-  const state = { history: [], posts: [], ticks: 0 }
+const repository = { id: 'deployforge', name: 'DeployForge', owner: 'harmohanjeetkaur', repo: 'deployForge', environment: 'docker-desktop', namespace: 'deployforge-gitops', workflow: 'ci.yaml', image: 'ghcr.io/harmohanjeetkaur/deployforge' }
+async function mock(page, { enabled = true, failure = false, history = [], advance = true } = {}) {
+  const state = { history, posts: [], ticks: 0 }
   await page.route('**/api/**', async route => {
     if (handleSession(route)) return
     const req = route.request(), url = new URL(req.url()), path = url.pathname
@@ -19,10 +19,10 @@ async function mock(page, { enabled = true, failure = false } = {}) {
     }
     if (path.endsWith('/retry')) { state.posts.push('retry'); return route.fulfill({ json: state.history[0] }) }
     if (path === '/api/releases') {
-      if (state.history.length) {
+      if (advance && state.history.length) {
         state.ticks++
         if (state.ticks >= 2) Object.assign(state.history[0], failure ? { state: 'failed', stage: 'ci', failedStage: 'security', message: 'Security policy failed; no promotion was requested' } : {
-          state: 'succeeded', stage: 'healthy', message: 'Release deployed and observed healthy', digest, run: { id: 123, attempt: 1, conclusion: 'success', url: 'https://github.com/harmohanjeetkaur/deployForge/actions/runs/123' }, promotion: { commit: 'c'.repeat(40) }, observation: { healthy: true, argoSynced: true, argoHealth: 'Healthy', readyReplicas: 3, desiredReplicas: 3 },
+          state: 'succeeded', stage: 'healthy', message: 'Release deployed and observed healthy', digest, run: { id: 123, attempt: 1, conclusion: 'success', url: 'https://github.com/harmohanjeetkaur/deployForge/actions/runs/123' }, promotion: { commit: 'c'.repeat(40), pushed: true }, observation: { healthy: true, argoSynced: true, argoHealth: 'Healthy', readyReplicas: 3, desiredReplicas: 3 },
         })
       }
       return route.fulfill({ json: { releases: state.history } })
@@ -80,5 +80,44 @@ test('unapproved session cannot submit a release', async ({ page }) => {
   await page.getByRole('textbox', { name: 'New release tag' }).fill('v1.2.0')
   await page.getByRole('button', { name: 'Create Tag & Deploy', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Connect your local browser session')
+  expect(state.posts).toHaveLength(0)
+})
+
+test('progress links point to release evidence and rollout opens overview', async ({ page }) => {
+  await mock(page, { advance: false, history: [{ id: 'r', repository: 'deployforge', tag: 'v1.2.0', sha, state: 'succeeded', stage: 'healthy', digest, run: { id: 123, url: 'https://untrusted.example' }, promotion: { commit: 'c'.repeat(40), pushed: true } }] })
+  const progress = page.getByRole('region', { name: 'Release progress for v1.2.0' })
+  await expect(progress.getByRole('link', { name: 'Tag creation' })).toHaveAttribute('href', 'https://github.com/harmohanjeetkaur/deployForge/tree/v1.2.0')
+  await expect(progress.getByRole('link', { name: 'CI and security' })).toHaveAttribute('href', 'https://github.com/harmohanjeetkaur/deployForge/actions/runs/123')
+  await expect(progress.getByRole('link', { name: 'Image publication' })).toHaveAttribute('href', 'https://github.com/harmohanjeetkaur/deployForge/pkgs/container/deployforge')
+  await expect(progress.getByRole('link', { name: 'GitOps promotion' })).toHaveAttribute('href', `https://github.com/harmohanjeetkaur/deployForge/commit/${'c'.repeat(40)}`)
+  await expect(progress.getByText('Complete', { exact: true })).toHaveCount(5)
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await progress.getByRole('button', { name: 'Rollout verification' }).click()
+  await expect(page.getByRole('link', { name: 'Overview', exact: true })).toHaveClass(/active/)
+})
+test('waiting workflow links to filtered Actions then switches to actual run', async ({ page }) => {
+  const state = await mock(page, { advance: false, history: [{ id: 'r', repository: 'deployforge', tag: 'v1.2.0', sha, state: 'ci', stage: 'ci' }] })
+  const progress = page.getByRole('region', { name: 'Release progress for v1.2.0' })
+  await expect(progress.getByRole('link', { name: 'CI and security' })).toHaveAttribute('href', /actions\/workflows\/ci.yaml\?query=branch%3Av1.2.0/)
+  await expect(progress.getByText('Waiting for workflow', { exact: true })).toBeVisible()
+  state.history[0].run = { id: 456, status: 'in_progress' }
+  await expect(progress.getByRole('link', { name: 'CI and security' })).toHaveAttribute('href', /actions\/runs\/456/)
+  await expect(progress.getByText('In progress', { exact: true })).toBeVisible()
+})
+test('review state never links an unpushed GitOps commit or marks rollout complete', async ({ page }) => {
+  await mock(page, { advance: false, history: [{ id: 'r', repository: 'deployforge', tag: 'v1.2.0', sha, state: 'needs-review', stage: 'failed', digest, promotion: { state: 'failed', failureStage: 'git-push', commit: 'c'.repeat(40), pushed: false } }] })
+  const progress = page.getByRole('region', { name: 'Release progress for v1.2.0' })
+  await expect(progress.getByRole('link', { name: 'GitOps promotion' })).toHaveCount(0)
+  await expect(progress.locator('li').nth(3)).toHaveClass('step-failed')
+  await expect(progress.locator('li').nth(4)).toContainText('Waiting')
+  await expect(progress.getByText('Complete', { exact: true })).toHaveCount(3)
+})
+
+for (const releaseState of ['failed', 'needs-review', 'ci']) test(`new release button respects ${releaseState} history`, async ({ page }) => {
+  const state = await mock(page, { advance: false, history: [{ id: 'previous', repository: 'deployforge', tag: 'v1.2.0', sha, state: releaseState, stage: releaseState === 'ci' ? 'ci' : 'failed' }] })
+  const button = page.getByRole('button', { name: 'Create Tag & Deploy', exact: true })
+  if (releaseState === 'ci') await expect(button).toBeDisabled()
+  else await expect(button).toBeEnabled()
   expect(state.posts).toHaveLength(0)
 })

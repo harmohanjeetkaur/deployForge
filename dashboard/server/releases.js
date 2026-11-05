@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { approvedRepository, repositories } from './repositories.js';
 import { validBearer } from './local-session.js';
 
-const terminal = r => ['succeeded', 'failed'].includes(r.state);
+const terminal = r => ['succeeded', 'failed', 'needs-review'].includes(r.state);
 const version = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 const digest = /^sha256:[a-f0-9]{64}$/;
 const reject = (message, statusCode = 400) => Object.assign(new Error(message), { statusCode });
@@ -82,7 +82,7 @@ export function createReleaseService({ store, github, verify, deployer, observe,
     }
   }
   return {
-    get busy() { return poisoned || creating || Boolean(active()); },
+    get busy() { return poisoned || creating || running || Boolean(active()); },
     get enabled() { return enabled && !poisoned; },
     list: () => snapshot(releases).reverse(),
     get(id) { const r = releases.find(item => item.id === id); if (!r) throw reject('Release not found', 404); return snapshot(r); },
@@ -97,7 +97,7 @@ export function createReleaseService({ store, github, verify, deployer, observe,
         if (prior.repository !== repository || prior.ref !== ref || prior.tag !== tag) throw reject('requestId was already used for different release inputs', 409);
         return snapshot(prior);
       }
-      if (creating || active() || deployer.busy) throw reject('Another release, deployment or rollback is active', 409);
+      if (creating || running || active() || deployer.busy) throw reject('Another release, deployment or rollback is active', 409);
       if (releases.some(r => r.repository === repository && r.tag === tag)) throw reject('Release tag already exists in history', 409);
       creating = true;
       try {
@@ -118,6 +118,13 @@ export function createReleaseService({ store, github, verify, deployer, observe,
       if (active() && active() !== r) throw reject('Another release is active', 409);
       if (r.state === 'succeeded') throw reject('Release already succeeded', 409);
       if (r.state === 'failed' && r.failedStage === 'tag') throw reject('Tag conflict requires a new version', 409);
+      if (r.state === 'needs-review') {
+        // Explicit reconciliation reads observations only; historical failures
+        // neither occupy the release queue nor replay uncertain Git writes.
+        running = true;
+        try { await advance(r); } finally { running = false; }
+        return snapshot(r);
+      }
       if (r.state === 'failed') await save(r, { state: 'ci', message: 'Retrying observation of the same tag and workflow; no new tag or CI dispatch' });
       return snapshot(r);
     },

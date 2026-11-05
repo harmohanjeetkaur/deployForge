@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import ReleaseProgress from './ReleaseProgress.jsx'
+import { releaseLinks } from './release-links.js'
 
-const steps = ['Tag creation', 'CI and security', 'Image publication', 'GitOps promotion', 'Rollout verification']
-const stageIndex = stage => stage === 'tag-creation' ? 0 : stage === 'ci' ? 1 : stage === 'image-publication' ? 2 : ['gitops-promotion', 'helm-write', 'gitops-commit', 'git-push'].includes(stage) ? 3 : 4
-
-export default function CreateRelease({ session, onAuthorizationError }) {
+export default function CreateRelease({ session, onAuthorizationError, onNavigate }) {
   const [repositories, setRepositories] = useState([])
   const [repository, setRepository] = useState('deployforge')
   const [sources, setSources] = useState([])
@@ -18,7 +17,7 @@ export default function CreateRelease({ session, onAuthorizationError }) {
   const [busy, setBusy] = useState(false)
   const submitting = useRef(false)
   const intent = useRef(null)
-  const active = history.some(r => !['failed', 'succeeded'].includes(r.state))
+  const active = history.some(r => !['failed', 'succeeded', 'needs-review'].includes(r.state))
   const selected = repositories.find(r => r.id === repository)
 
   useEffect(() => {
@@ -95,6 +94,7 @@ export default function CreateRelease({ session, onAuthorizationError }) {
       {sourceError && <p className="state-warning">{sourceError}</p>}
       <label>New release tag<input required placeholder="v1.2.0" maxLength={100} value={tag} onChange={e => setTag(e.target.value)} disabled={busy}/></label>
       <p>Target: {selected?.environment || 'docker-desktop'} / {selected?.namespace || 'deployforge-gitops'}. Clicking below authorizes tag creation and automatic deployment after all checks pass.</p>
+      {active && <p className="state-warning">A release is currently running. New releases are available when it finishes.</p>}
       {!enabled && <p className="state-warning">Release execution disabled. No tag, workflow or deployment will be created.</p>}
       {session.state !== 'authorized' && <p>Connect a local session in Settings to authorize release creation.</p>}
       <button className="btn btn-primary" type="submit" disabled={busy || active || !enabled}>{busy ? 'Submitting…' : 'Create Tag & Deploy'}</button>
@@ -102,22 +102,25 @@ export default function CreateRelease({ session, onAuthorizationError }) {
     </form>
     <h3>Release history</h3>
     {!history.length && <p>No releases recorded. Live CI/CD has not been verified.</p>}
-    <div className="release-history">{history.map(r => <article className="control-panel" key={r.id}>
-      <div className="panel-heading"><h3>{r.tag} · {r.repository}</h3><span className={`health-badge ${r.state === 'succeeded' ? 'good' : 'neutral'}`}>{r.state}</span></div>
-      <ol className="release-steps" aria-label={`Progress for ${r.tag}`}>{steps.map((step, i) => <li key={step} aria-current={stageIndex(r.stage === 'failed' ? r.promotion?.failureStage || 'gitops-promotion' : r.stage) === i ? 'step' : undefined} className={r.state === 'succeeded' || i < stageIndex(r.stage === 'failed' ? r.promotion?.failureStage || 'gitops-promotion' : r.stage) ? 'complete' : ''}>{step}</li>)}</ol>
+    <div className="release-history">{history.map(r => {
+      const registered = repositories.find(item => item.id === r.repository)
+      const links = releaseLinks(r, registered)
+      return <article className="control-panel" key={r.id}>
+      <div className="panel-heading"><h3>{r.tag} · {registered?.name || r.repository}</h3></div>
+      <ReleaseProgress release={r} repository={registered} onNavigate={onNavigate} />
       <p role="status">{r.message}</p>
       {r.promotion?.state === 'failed' && <p className="state-warning">GitOps: {r.promotion.message || 'Promotion failed; inspect Git and cluster state.'}</p>}
       <dl className="stacked-facts release-wrap">
-        <div><dt>Source commit</dt><dd><code>{r.sha}</code></dd></div>
-        <div><dt>Image digest</dt><dd><code>{r.digest || 'Not verified'}</code></dd></div>
-        <div><dt>GitHub Actions</dt><dd>{r.run ? <a href={r.run.url} target="_blank" rel="noreferrer">Run {r.run.id} · attempt {r.run.attempt} · {r.run.conclusion || r.run.status}</a> : 'Waiting for tag workflow'}</dd></div>
-        <div><dt>GitOps commit</dt><dd><code>{r.promotion?.commit || 'Not created'}</code></dd></div>
+        <div><dt>Source commit</dt><dd>{links.source ? <a href={links.source} target="_blank" rel="noopener noreferrer"><code>{r.sha}</code></a> : <code>{r.sha}</code>}</dd></div>
+        <div><dt>Image digest</dt><dd>{r.digest && links.image ? <a href={links.image} target="_blank" rel="noopener noreferrer"><code>{r.digest}</code></a> : <code>{r.digest || 'Not verified'}</code>}</dd></div>
+        <div><dt>GitHub Actions</dt><dd>{r.run && links.run ? <a href={links.run} target="_blank" rel="noopener noreferrer">Run {r.run.id} · attempt {r.run.attempt} · {r.run.conclusion || r.run.status}</a> : 'Waiting for tag workflow'}</dd></div>
+        <div><dt>GitOps commit</dt><dd>{links.promotion ? <a href={links.promotion} target="_blank" rel="noopener noreferrer"><code>{r.promotion.commit}</code></a> : <code>{r.promotion?.commit || 'Not created'}</code>}</dd></div>
         <div><dt>ArgoCD</dt><dd>{r.observation ? `${r.observation.argoSynced ? 'Synced at promoted commit' : 'Not synced'} · ${r.observation.argoHealth || 'Unknown'}` : 'Not observed'}</dd></div>
         <div><dt>Kubernetes health</dt><dd>{r.observation ? `${r.observation.readyReplicas ?? '—'}/${r.observation.desiredReplicas ?? '—'} ready · ${r.observation.healthy ? 'Healthy' : 'Not verified healthy'}` : 'Not observed'}</dd></div>
         <div><dt>Version observed at completion</dt><dd>{r.state === 'succeeded' ? `${r.tag} (${r.sha})` : 'Not confirmed'}</dd></div>
         <div><dt>Created</dt><dd>{new Date(r.createdAt).toLocaleString()}</dd></div>
       </dl>
       {['failed', 'needs-review'].includes(r.state) && <><p>Retry checks the same tag and actual workflow again. It never recreates a tag, reruns CI, or repeats an uncertain Git write. Fix CI and rerun it in GitHub when appropriate; use a new version for changed source.</p><button className="btn btn-secondary" disabled={busy || !enabled || session.state !== 'authorized'} onClick={() => retry(r)}>Retry reconciliation</button></>}
-    </article>)}</div>
+    </article>})}</div>
   </section>
 }

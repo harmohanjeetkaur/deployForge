@@ -120,7 +120,7 @@ for (const hasCommit of [false, true]) test(`restart after promotion intent (${h
   Object.assign(f.deps.store.state.releases[0], { state: 'promoting', promotion: hasCommit ? { commit } : {} }); await f.deps.store.save();
   const resumed = createReleaseService({ ...f.deps, store: { state: f.durable(), save: async () => {} } });
   await resumed.tick(); assert.deepEqual(f.calls, []); assert.equal(resumed.get(r.id).state, hasCommit ? 'succeeded' : 'needs-review');
-  if (!hasCommit) { await resumed.retry(r.id); await resumed.tick(); assert.deepEqual(f.calls, []); assert.equal(resumed.busy, true); }
+  if (!hasCommit) { await resumed.retry(r.id); await resumed.tick(); assert.deepEqual(f.calls, []); assert.equal(resumed.busy, false); }
 });
 test('deployment failure is retained and retry is observation-only', async () => {
   const f = fixture({ observe: async () => ({ healthy: false }), deployer: { status: null, async request() { this.status = { tag: sha, state: 'failed', stage: 'failed', commit, pushed: true }; return this.status; } } });
@@ -205,4 +205,20 @@ test('known pre-write deployment validation failure can be retried without bypas
 test('unsafe preflight fails before tag lookup or scheduling', async () => {
   const f = fixture({ preflight: async () => { throw new Error('dirty working tree'); }, github: { source: () => assert.fail('preflight must run first') } });
   await assert.rejects(f.service.create(input)); assert.equal(f.service.list().length, 0); assert.deepEqual(f.calls, []);
+});
+
+for (const state of ['failed', 'needs-review']) test(`${state} history does not block a new release after restart or replay old writes`, async () => {
+  const f = fixture();
+  const previous = await f.service.create(input);
+  Object.assign(f.deps.store.state.releases[0], { state, stage: 'failed', promotion: { commit, pushed: false } });
+  await f.deps.store.save();
+  const resumed = createReleaseService({ ...f.deps, store: { state: f.durable(), save: async () => {} } });
+  assert.equal(resumed.busy, false);
+  await resumed.tick(); assert.deepEqual(f.calls, []);
+  const next = await resumed.create({ ...input, tag: 'v1.3.0', requestId: 'test-request-00002' });
+  assert.equal(next.state, 'tag-pending');
+  assert.equal(resumed.get(previous.id).state, state);
+  await assert.rejects(resumed.retry(previous.id), { statusCode: 409 });
+  await assert.rejects(resumed.create({ ...input, tag: 'v1.4.0', requestId: 'test-request-00003' }), { statusCode: 409 });
+  assert.deepEqual(f.calls, []);
 });
