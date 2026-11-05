@@ -11,6 +11,8 @@ async function setup(page, { verificationError, deployError } = {}) {
     const path = new URL(route.request().url()).pathname
     let json
     if (path === '/api/deploy/config') json = executionConfig
+    else if (path === '/api/releases') json = { releases: [] }
+    else if (path === '/api/repositories') json = { repositories: [] }
     else if (path === '/api/kubernetes/status') json = { currentImage: `${repo}:${current}`, desiredReplicas: 3, readyReplicas: 3, pods: [] }
     else if (path === '/api/kubernetes/history') json = [{ revision: '5', deploymentRevision: '5', containerImage: `${repo}:${current}`, isCurrent: true, rollbackEligible: false }, { revision: '4', deploymentRevision: '5', containerImage: `${repo}:${previous}`, isCurrent: false, rollbackEligible: true }]
     else if (path.startsWith('/api/images/verify/')) json = verificationError ? { valid: true, exists: false, platformsSupported: false, error: verificationError } : { valid: true, exists: true, platformsSupported: true }

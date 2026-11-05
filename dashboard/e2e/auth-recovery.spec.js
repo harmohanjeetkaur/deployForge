@@ -9,6 +9,8 @@ for (const operation of ['deploy', 'rollback']) {
     let submissions = 0
     await page.route('**/api/**', async route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
       const request = route.request(), path = new URL(request.url()).pathname
       let json
       if (path === '/api/deploy/config') json = executionConfig

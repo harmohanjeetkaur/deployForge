@@ -7,6 +7,8 @@ async function setup(page) {
   let unavailable = false
   await page.route('**/api/**', route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     expect(route.request().method()).toBe('GET')
     const path = new URL(route.request().url()).pathname
     if (path === '/api/deploy/config') return route.fulfill({ status: unavailable ? 503 : 200, json: unavailable ? {} : config })

@@ -120,6 +120,8 @@ test('live tooling dry-run stays read-only while normal UI refuses unconfigured 
   expect((await post({ tag: liveTarget, execution: 'real', environment: 'docker-desktop' })).code).toBe(503)
   await page.route('**/api/**', async route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     const request = route.request()
     expect(request.method()).toBe('GET')
     const url = new URL(request.url())
@@ -146,6 +148,8 @@ test('live tooling dry-run stays read-only while normal UI refuses unconfigured 
 async function mockApi(page, deployResponse) {
   await page.route('**/api/**', async route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     const url = new URL(route.request().url())
     let body
     if (url.pathname === '/api/deploy/config') body = executionConfig

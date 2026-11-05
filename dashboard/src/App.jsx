@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import DeploymentWorkspace from './DeploymentWorkspace.jsx'
 import CreateRelease from './CreateRelease.jsx'
+import { releaseImages } from './release-images.js'
 import ExecutionStatus from './ExecutionStatus.jsx'
 import LocalSession from './LocalSession.jsx'
 import useLocalSession from './useLocalSession.js'
@@ -17,6 +18,9 @@ function App() {
   const [historyError, setHistoryError] = useState(null)
   const [selectedVersion, setSelectedVersion] = useState(null)
   const [extraImages, setExtraImages] = useState([])
+  const [publishedImages, setPublishedImages] = useState([])
+  const [releaseImagesError, setReleaseImagesError] = useState(null)
+  const releaseImagesRequest = useRef(0)
   const [candidateTag, setCandidateTag] = useState('')
   const [candidateError, setCandidateError] = useState(null)
   const [verificationResult, setVerificationResult] = useState(null)
@@ -84,6 +88,30 @@ function App() {
   useEffect(() => {
     fetchDeploymentHistory()
   }, [])
+
+  async function fetchReleaseImages() {
+    const request = ++releaseImagesRequest.current
+    try {
+      const options = { cache: 'no-store', signal: AbortSignal.timeout(8000) }
+      const [releaseResponse, repositoryResponse] = await Promise.all([fetch('/api/releases', options), fetch('/api/repositories', options)])
+      if (!releaseResponse.ok || !repositoryResponse.ok) throw new Error('Release image listing unavailable')
+      const data = await releaseResponse.json(), config = await repositoryResponse.json()
+      if (!Array.isArray(data.releases) || !Array.isArray(config.repositories)) throw new Error('Invalid release image listing')
+      if (request === releaseImagesRequest.current) { setPublishedImages(releaseImages(data.releases, config.repositories)); setReleaseImagesError(null) }
+    } catch {
+      if (request === releaseImagesRequest.current) { setPublishedImages([]); setReleaseImagesError('Recent release images unavailable. Refresh Versions to retry; retained revisions remain listed.') }
+    }
+  }
+
+  useEffect(() => {
+    if (currentPage !== 'deployments') return
+    const initial = setTimeout(() => fetchReleaseImages(), 0)
+    const requestRef = releaseImagesRequest
+    const timer = setInterval(fetchReleaseImages, 10000)
+    const refresh = () => fetchReleaseImages()
+    window.addEventListener('focus', refresh)
+    return () => { clearTimeout(initial); clearInterval(timer); window.removeEventListener('focus', refresh); requestRef.current++ }
+  }, [currentPage])
 
   async function fetchDeploymentConfig() {
     const requestId = ++configRequestRef.current
@@ -210,6 +238,7 @@ function App() {
   }
 
   const availableImages = [
+    ...publishedImages,
     ...seedImages,
     ...(history || []).filter(entry => validateImageTag(entry.containerImage).valid).map(entry => ({
       id: `history-${getImageShort(entry.containerImage)}`, containerImage: entry.containerImage,
@@ -431,7 +460,7 @@ function App() {
 
         {currentPage === 'deployments' && <DeploymentWorkspace
           data={k8sData} selected={selectedVersion} images={availableImages}
-          history={history} historyLoading={historyLoading} historyError={historyError}
+          history={history} historyLoading={historyLoading} historyError={historyError} releaseImagesError={releaseImagesError}
           verification={verificationResult} verifying={verifying} busy={deploying}
           candidateTag={candidateTag}
           setCandidateTag={setCandidateTag} candidateError={candidateError}
@@ -444,7 +473,7 @@ function App() {
             else if (value.startsWith('ghcr-')) changeSelectedVersion(availableImages.find(img => img.id === value.replace('ghcr-', '')) || null)
             else changeSelectedVersion(null)
           }}
-          onRefresh={() => { fetchDeploymentConfig(); fetchDeploymentHistory(); fetchKubernetesStatus() }}
+          onRefresh={() => { fetchDeploymentConfig(); fetchDeploymentHistory(); fetchKubernetesStatus(); fetchReleaseImages() }}
           onMode={mode => {
             if (submissionLockRef.current || deploying) { setPreflightError('A release is already running. Wait for its result before changing operations.'); return }
             if (mode === 'deploy') handleDeployNewVersion()

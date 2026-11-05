@@ -11,7 +11,7 @@ const steps = [
 ]
 
 export default function DeploymentWorkspace({
-  data, selected, images, history, historyLoading, historyError, verification, verifying,
+  data, selected, images, history, historyLoading, historyError, releaseImagesError, verification, verifying,
   busy, candidateTag, setCandidateTag, candidateError, operation,
   phase, result, error, blockers, rollbackBlocker, eligibility,
   environment, executionConfig, configError, configCheckedAt, onRefreshConfig, lastOperation, onSelect, onRefresh, onUseTag, onVerify,
@@ -42,6 +42,7 @@ export default function DeploymentWorkspace({
           {operation === 'rollback' ? (history || []).map(entry => <option key={entry.revision} value={`k8s-${entry.revision}`}>Revision {entry.revision} · {shortTag(entry.containerImage)}{entry.isCurrent ? ' (Current)' : entry.rollbackEligible === true ? ' (Previous)' : ' (Not eligible)'}</option>) : images.map(image => <option key={image.id} value={`ghcr-${image.id}`}>{image.displayName}{image.containerImage === data?.currentImage ? ' (Current)' : ''}</option>)}
         </select>
         {operation === 'deploy' && <details className="image-entry"><summary>Use another image SHA</summary><div className="image-candidate-input"><label htmlFor="image-sha-input">Image SHA tag</label><input id="image-sha-input" value={candidateTag} onChange={e => setCandidateTag(e.target.value)} placeholder="40-character image SHA" autoComplete="off" /><button className="btn btn-secondary" onClick={onUseTag}>Use Image Tag</button>{candidateError && <p className="error-text">{candidateError}</p>}</div></details>}
+        {operation === 'deploy' && releaseImagesError && <p className="error-text" role="status">{releaseImagesError}</p>}
         {historyLoading && <p className="release-hint">Loading versions…</p>}
         {historyError && <p className="error-text">Could not load revisions: {historyError}</p>}
         {operation === 'rollback' && !historyLoading && !history?.length && <p className="release-hint">No retained Kubernetes revisions are available for rollback.</p>}

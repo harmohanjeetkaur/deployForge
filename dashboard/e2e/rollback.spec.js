@@ -10,6 +10,8 @@ const past = { revision: '4', deploymentRevision: '5', containerImage: `${repo}:
 async function setup(page, { history = [past, { ...past, revision: '5', containerImage: `${repo}:${current}`, isCurrent: true, rollbackEligible: false }], post, status } = {}) {
   await page.route('**/api/**', async route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     const request = route.request()
     const path = new URL(request.url()).pathname
     let json

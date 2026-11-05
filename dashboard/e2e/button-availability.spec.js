@@ -12,6 +12,8 @@ async function setup(page, { history = [eligible], secondHistory, statusUnavaila
   let useSecondHistory = false, posts = 0
   await page.route('**/api/**', async route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     const request = route.request()
     const path = new URL(request.url()).pathname
     let json

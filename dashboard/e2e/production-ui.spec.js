@@ -10,6 +10,8 @@ async function setup(page, { config = executionConfig, post = route => route.ful
   let requests = 0
   await page.route('**/api/**', async route => {
     if (handleSession(route)) return;
+    if (new URL(route.request().url()).pathname === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (new URL(route.request().url()).pathname === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     const path = new URL(route.request().url()).pathname
     let json
     if (path === '/api/deploy/config') json = config
