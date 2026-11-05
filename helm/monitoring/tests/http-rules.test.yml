@@ -1,0 +1,79 @@
+rule_files: [/etc/prometheus/alerts.yml]
+evaluation_interval: 1m
+fuzzy_compare: true
+tests:
+- name: sustained 10 percent 5xx with sufficient traffic
+  interval: 1m
+  input_series:
+  - series: 'deployforge_http_requests_total{job="deployforge-api",route="/tasks",method="GET",code="200"}'
+    values: '0+9x20'
+  - series: 'deployforge_http_requests_total{job="deployforge-api",route="/tasks",method="GET",code="500"}'
+    values: '0+1x20'
+  - series: 'probe_success{job="application-probes",instance="readyz"}'
+    values: '1+0x20'
+  - series: 'deployforge_http_request_duration_seconds_bucket{job="deployforge-api",route="/tasks",method="GET",le="0.1"}'
+    values: '0+8x20'
+  - series: 'deployforge_http_request_duration_seconds_bucket{job="deployforge-api",route="/tasks",method="GET",le="0.5"}'
+    values: '0+10x20'
+  - series: 'deployforge_http_request_duration_seconds_bucket{job="deployforge-api",route="/tasks",method="GET",le="+Inf"}'
+    values: '0+10x20'
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: DeployForgeHighHTTPErrorRate
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: DeployForgeHighHTTPErrorRate
+    exp_alerts:
+    - exp_labels: {severity: warning}
+      exp_annotations:
+        summary: DeployForge HTTP 5xx ratio exceeds 5% for 5m with traffic above 0.1 requests/s
+  promql_expr_test: []
+- name: low traffic does not page on a single error
+  interval: 1m
+  input_series:
+  - series: 'deployforge_http_requests_total{job="deployforge-api",route="/tasks",method="GET",code="500"}'
+    values: '0+1x20'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: DeployForgeHighHTTPErrorRate
+    exp_alerts: []
+- name: unavailable health probe fires after sustained failure
+  interval: 1m
+  input_series:
+  - series: 'probe_success{job="application-probes",instance="readyz"}'
+    values: '0+0x10'
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: DeployForgeUnavailable
+    exp_alerts:
+    - exp_labels: {job: application-probes, instance: readyz, severity: critical}
+      exp_annotations: {summary: DeployForge health probe failed}
+- name: recovered probe clears alert
+  interval: 1m
+  input_series:
+  - series: 'probe_success{job="application-probes",instance="readyz"}'
+    values: '0 0 1 1 1'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: DeployForgeUnavailable
+    exp_alerts: []
+- name: client errors and health checks cannot cause server error alert
+  interval: 1m
+  input_series:
+  - series: 'deployforge_http_requests_total{job="deployforge-api",route="/tasks",method="POST",code="400"}'
+    values: '0+20x20'
+  - series: 'deployforge_http_requests_total{job="deployforge-api",route="/healthz",method="GET",code="500"}'
+    values: '0+20x20'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: DeployForgeHighHTTPErrorRate
+    exp_alerts: []
+- name: missing API telemetry is unavailable rather than zero
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: DeployForgeAPIMetricsUnavailable
+    exp_alerts:
+    - exp_labels: {severity: warning, job: deployforge-api}
+      exp_annotations: {summary: No healthy DeployForge API metrics targets for 2m}

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: deployforge-monitoring
+version: 0.1.0
+description: Local-only DeployForge observability
+type: application

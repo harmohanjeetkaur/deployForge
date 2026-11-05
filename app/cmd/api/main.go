@@ -17,24 +17,12 @@ func main() {
 	port := getEnv("PORT", "8080")
 	addr := ":" + port
 
-	// Initialize task store and server
-	taskStore := api.NewTaskStore()
-	server := api.NewServer(taskStore)
-
-	// Create ServeMux with Go 1.22+ routing
-	mux := http.NewServeMux()
-
-	// Register handlers
-	mux.HandleFunc("GET /", server.IndexHandler)
-	mux.HandleFunc("GET /tasks", server.TasksListHandler)
-	mux.HandleFunc("POST /tasks", server.TaskCreateHandler)
-	mux.HandleFunc("GET /healthz", server.HealthzHandler)
-	mux.HandleFunc("GET /readyz", server.ReadyzHandler)
+	handler := api.NewHandler(api.NewTaskStore())
 
 	// Configure HTTP server
 	httpServer := &http.Server{
 		Addr:    addr,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	// Start server in a goroutine

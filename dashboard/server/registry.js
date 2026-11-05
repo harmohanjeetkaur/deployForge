@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 const GHCR_REPO = 'ghcr.io/harmohanjeetkaur/deployforge';
 const REGISTRY_TIMEOUT = 10000;
-export async function verifyImageTag(tag, fetch = globalThis.fetch) {
+export async function verifyImageTag(tag, fetch = globalThis.fetch, strictDigest = false) {
   // Validate tag format (40 hex characters)
   const shaPattern = /^[a-f0-9]{40}$/;
   if (!shaPattern.test(tag)) {
@@ -32,7 +33,7 @@ export async function verifyImageTag(tag, fetch = globalThis.fetch) {
       try {
         const response = await fetch(imageUrl, { method: 'GET', headers, signal: controller.signal });
         const body = await response.text();
-        return { ok: response.ok, status: response.status, headers: response.headers, json: async () => JSON.parse(body) };
+        return { ok: response.ok, status: response.status, headers: response.headers, digest: `sha256:${createHash('sha256').update(body).digest('hex')}`, json: async () => JSON.parse(body) };
       } finally { clearTimeout(timeoutId); }
     };
 
@@ -102,6 +103,7 @@ export async function verifyImageTag(tag, fetch = globalThis.fetch) {
     }
 
     const manifest = await response.json();
+    if (strictDigest && response.headers.get('docker-content-digest') !== response.digest) throw new Error('Registry manifest digest mismatch');
 
     // Check for platform support
     const platforms = [];
@@ -126,7 +128,7 @@ export async function verifyImageTag(tag, fetch = globalThis.fetch) {
       exists: true,
       platformsSupported: bothSupported,
       platforms,
-      digest: response.headers.get('docker-content-digest') || manifest.digest || null,
+      digest: strictDigest ? response.digest : response.headers.get('docker-content-digest') || manifest.digest || null,
       hasAmd64,
       hasArm64
     };

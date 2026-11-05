@@ -1,0 +1,55 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+rule_files: [/etc/prometheus/alerts.yml]
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+scrape_configs:
+{{ if .Values.scrapesEnabled }}
+{{ if .Values.applicationMetrics.enabled }}
+  # SRV discovery returns a separate endpoint for every ready replica. No API/RBAC token.
+  - job_name: deployforge-api
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    sample_limit: 5000
+    label_limit: 10
+    body_size_limit: 2MB
+    dns_sd_configs:
+      - names: [_http-metrics._tcp.deployforge-metrics.deployforge-gitops.svc.cluster.local]
+        type: SRV
+        refresh_interval: 30s
+{{ end }}
+  - job_name: prometheus
+    static_configs:
+      - targets: [prometheus:9090]
+  - job_name: kube-state-metrics
+    static_configs:
+      - targets: [kube-state-metrics:8080]
+  - job_name: blackbox-exporter
+    static_configs:
+      - targets: [blackbox-exporter:9115]
+  - job_name: alertmanager
+    static_configs:
+      - targets: [alertmanager:9093]
+  - job_name: argocd
+    static_configs:
+      - targets: [argocd-metrics.argocd.svc.cluster.local:8082]
+  - job_name: application-probes
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: [http://deployforge.deployforge-gitops.svc.cluster.local:8080/healthz, http://deployforge.deployforge-gitops.svc.cluster.local:8080/readyz]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+{{ else }}
+  []
+{{ end }}

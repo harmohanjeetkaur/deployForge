@@ -1,0 +1,55 @@
+groups:
+- name: deployforge
+  rules:
+  - alert: DeployForgeUnavailable
+    expr: probe_success{job="application-probes"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: DeployForge health probe failed
+  - alert: DeployForgeReplicasUnavailable
+    expr: kube_deployment_status_replicas_available{namespace="deployforge-gitops",deployment="deployforge"}
+      < kube_deployment_spec_replicas{namespace="deployforge-gitops",deployment="deployforge"}
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: DeployForge available replicas below desired
+  - alert: MonitoringTargetDown
+    expr: up == 0
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: Monitoring scrape target unavailable
+{{ if .Values.syntheticAlert }}
+- name: safe-pipeline-test
+  rules:
+  - alert: DeployForgeMonitoringPipelineTest
+    expr: vector(1)
+    labels:
+      severity: info
+      synthetic: "true"
+    annotations:
+      summary: Safe monitoring pipeline test; no application changes
+{{ end }}
+{{ if and .Values.scrapesEnabled .Values.applicationMetrics.enabled }}
+- name: deployforge-http
+  rules:
+  - alert: DeployForgeHighHTTPErrorRate
+    expr: (sum(rate(deployforge_http_requests_total{job="deployforge-api",code=~"5..",route!~"/healthz|/readyz"}[5m])) / sum(rate(deployforge_http_requests_total{job="deployforge-api",route!~"/healthz|/readyz"}[5m])) > 0.05) and (sum(rate(deployforge_http_requests_total{job="deployforge-api",route!~"/healthz|/readyz"}[5m])) > 0.1)
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: DeployForge HTTP 5xx ratio exceeds 5% for 5m with traffic above 0.1 requests/s
+  - alert: DeployForgeAPIMetricsUnavailable
+    expr: absent(up{job="deployforge-api"}) or max(up{job="deployforge-api"}) == 0
+    for: 2m
+    labels:
+      severity: warning
+      job: deployforge-api
+    annotations:
+      summary: No healthy DeployForge API metrics targets for 2m
+{{ end }}

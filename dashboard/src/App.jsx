@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import DeploymentWorkspace from './DeploymentWorkspace.jsx'
+import CreateRelease from './CreateRelease.jsx'
 import ExecutionStatus from './ExecutionStatus.jsx'
 import LocalSession from './LocalSession.jsx'
 import useLocalSession from './useLocalSession.js'
 import { executionState, validateExecutionConfig } from './execution-state.js'
-import { Overview, KubernetesPage, SecurityPage, MonitoringPage } from './ControlPages.jsx'
+import { Overview, SecurityPage, MonitoringPage } from './ControlPages.jsx'
 
 function App() {
   const [k8sData, setK8sData] = useState(null)
@@ -411,9 +412,9 @@ function App() {
           <div className="brand-mark" aria-hidden="true">DF</div><h2>DeployForge</h2><p>PLATFORM CONTROL</p>
         </div>
         <nav className="sidebar-nav" aria-label="Workspace navigation">
+          <a href="#" aria-current={currentPage === 'releases' ? 'page' : undefined} className={`nav-item ${currentPage === 'releases' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('releases') }}>Create Release</a>
           <a href="#" aria-current={currentPage === 'overview' ? 'page' : undefined} className={`nav-item ${currentPage === 'overview' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('overview') }}>Overview</a>
           <a href="#" aria-current={currentPage === 'deployments' ? 'page' : undefined} className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('deployments') }}>Deployments</a>
-          <a href="#" aria-current={currentPage === 'kubernetes' ? 'page' : undefined} className={`nav-item ${currentPage === 'kubernetes' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('kubernetes') }}>Kubernetes</a>
           <a href="#" aria-current={currentPage === 'security' ? 'page' : undefined} className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('security') }}>Security</a>
           <a href="#" aria-current={currentPage === 'monitoring' ? 'page' : undefined} className={`nav-item ${currentPage === 'monitoring' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('monitoring') }}>Monitoring</a>
           <a href="#" aria-current={currentPage === 'settings' ? 'page' : undefined} className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('settings') }}>Settings</a>
@@ -453,7 +454,7 @@ function App() {
           onSelectRollback={entry => { if (changeSelectedVersion(entry) !== false) { setOperation('rollback'); document.getElementById('version-select')?.focus() } }}
         />}
 
-        {currentPage === 'kubernetes' && <KubernetesPage data={k8sData} loading={loading} error={error} config={backendConfig} onRefresh={fetchKubernetesStatus} />}
+        {currentPage === 'releases' && <CreateRelease session={session} onAuthorizationError={rejectSession} />}
         {currentPage === 'security' && <SecurityPage />}
         {currentPage === 'monitoring' && <MonitoringPage />}
 

@@ -2,6 +2,14 @@
 
 A DevOps/Platform Engineering portfolio project demonstrating modern infrastructure and deployment practices.
 
+The project now includes a React/Express control center, Helm/GitOps deployment
+and rollback, monitoring, and a self-service tag → CI → image → deployment workflow.
+See the [dashboard guide](dashboard/README.md) and the
+[release architecture and setup](dashboard/docs/self-service-releases.md).
+Release execution remains disabled by default. The release workflow has been
+tested with mocks; a real end-to-end release still requires explicit approval.
+The original API walkthrough below describes the initial project phase.
+
 ## Phase 1: Task Management REST API
 
 A simple Go-based REST API for task management using Go's standard library.

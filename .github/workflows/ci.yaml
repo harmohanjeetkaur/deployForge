@@ -2,113 +2,177 @@ name: DeployForge - Build & Security
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'app/**'
-      - '.github/workflows/ci.yaml'
-      - '!helm/deployforge/values.yaml'
+    branches: [main]
+    tags: ['v*']
+    paths: ['app/**', '.github/workflows/ci.yaml']
   pull_request:
-    branches:
-      - main
-    paths:
-      - 'app/**'
-      - '.github/workflows/ci.yaml'
-      - '!helm/deployforge/values.yaml'
+    branches: [main]
+    paths: ['app/**', '.github/workflows/ci.yaml']
+
+# Serialize publication, without cancelling a release already in progress.
+concurrency:
+  group: deployforge-artifacts-${{ github.repository }}
+  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
+  test:
+    name: Tests and Go build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: '[[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]'
+      - name: Tests
+        working-directory: app
+        run: go test ./...
+      - name: Vet
+        working-directory: app
+        run: go vet ./...
+      - name: Build
+        working-directory: app
+        run: go build -o deployforge-api ./cmd/api
+
   build-and-scan:
-    name: Build, Test & Security Scan
+    name: Build and scan (${{ matrix.arch }})
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
         with:
-          go-version-file: app/go.mod
-          cache-dependency-path: app/go.mod
-
-      - name: Run tests
-        working-directory: ./app
-        run: go test ./...
-
-      - name: Run vet
-        working-directory: ./app
-        run: go vet ./...
-
-      - name: Build
-        working-directory: ./app
-        run: go build -o deployforge-api ./cmd/api
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        run: docker build -t deployforge:ci ./app
-
-      - name: Scan Docker image with Trivy
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Image coordinates
+        env:
+          REPOSITORY: ${{ github.repository }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          echo "IMAGE=ghcr.io/${REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "CANDIDATE=${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ARCH}" >> "$GITHUB_ENV"
+      - name: Build exact platform image
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: ${{ env.IMAGE }}:${{ env.CANDIDATE }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          provenance: false
+      - name: Security policy
+        env:
+          TRIVY_IGNOREFILE: /dev/null
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: deployforge:ci
-          format: table
+          trivy-config: /dev/null
+          image-ref: ${{ env.IMAGE }}:${{ env.CANDIDATE }}
+          scanners: vuln
+          format: json
+          output: trivy-${{ matrix.arch }}.json
           severity: HIGH,CRITICAL
-          exit-code: '0'
-
+          ignore-unfixed: false
+          exit-code: '1'
+      - name: Retain security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: trivy-${{ matrix.arch }}.json
+          if-no-files-found: warn
       - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push multi-platform image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+      - name: Publish scanned platform image
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker push "$IMAGE:$CANDIDATE"
+          docker buildx imagetools inspect "$IMAGE:$CANDIDATE" --format '{{json .Manifest}}' | jq -er '.digest' > "digest-${ARCH}.txt"
+      - name: Retain platform digest
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
         with:
-          context: ./app
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/harmohanjeetkaur/deployforge:latest
-            ghcr.io/harmohanjeetkaur/deployforge:${{ github.sha }}
+          name: digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: digest-${{ matrix.arch }}.txt
+          if-no-files-found: error
 
-  update-helm-tag:
-    name: Update Helm Image Tag
-    runs-on: ubuntu-latest
+  publish:
+    name: Publish release index and evidence
     needs: build-and-scan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-
+      contents: read
+      packages: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/download-artifact@v4
         with:
-          ref: main
-
-      - name: Update Helm image tag
+          pattern: digest-${{ github.run_id }}-${{ github.run_attempt }}-*
+          merge-multiple: true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish immutable SHA and version index
+        env:
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT_TAG=$(grep 'tag:' helm/deployforge/values.yaml | awk '{print $2}' | tr -d '"')
-          NEW_TAG="${{ github.sha }}"
-          if [ "$CURRENT_TAG" = "$NEW_TAG" ]; then
-            echo "Tag already matches $NEW_TAG, skipping commit"
-            exit 0
-          fi
-          sed -i "s/tag: .*/tag: \"$NEW_TAG\"/" helm/deployforge/values.yaml
+          set -euo pipefail
+          IMAGE="ghcr.io/${REPOSITORY,,}"
+          PACKAGE="${REPOSITORY,,}"
+          # Check explicit HTTP status; auth/network errors are never interpreted as absence.
+          REGISTRY_TOKEN=$(curl --fail --silent --show-error --user "$GHCR_USER:$GHCR_PASSWORD" "https://ghcr.io/token?service=ghcr.io&scope=repository:${PACKAGE}:pull,push" | jq -er '.token')
+          echo "::add-mask::$REGISTRY_TOKEN"
+          for TAG in "$GITHUB_SHA" "$RELEASE_TAG"; do
+            STATUS=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --header "Authorization: Bearer $REGISTRY_TOKEN" --header 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' "https://ghcr.io/v2/${PACKAGE}/manifests/${TAG}")
+            if [ "$STATUS" != 404 ]; then
+              echo "Refusing existing tag or unverifiable registry response ($STATUS). SHA/version tags must not be overwritten."
+              exit 1
+            fi
+          done
+          AMD64=$(cat digest-amd64.txt)
+          ARM64=$(cat digest-arm64.txt)
+          [[ "$AMD64" =~ ^sha256:[a-f0-9]{64}$ && "$ARM64" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker buildx imagetools create --tag "$IMAGE:$GITHUB_SHA" --tag "$IMAGE:$RELEASE_TAG" "$IMAGE@$AMD64" "$IMAGE@$ARM64"
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er '.digest')
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          jq -n --arg repository "$REPOSITORY" --arg tag "$RELEASE_TAG" --arg sha "$GITHUB_SHA" --arg image "$IMAGE" --arg digest "$DIGEST" --arg runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" '{repository:$repository,tag:$tag,sha:$sha,image:$image,digest:$digest,runId:$runId,runAttempt:$runAttempt,platforms:["linux/amd64","linux/arm64"],security:"passed"}' > release.json
+          cat release.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Record release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release.json
+          if-no-files-found: error
+          retention-days: 90
 
-      - name: Commit and push changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add helm/deployforge/values.yaml
-          git diff --staged --quiet || (git commit -m "ci: update Helm image tag [skip ci]" && git push)
+# CI NEVER edits Helm or pushes GitOps commits. DeployForge owns promotion.

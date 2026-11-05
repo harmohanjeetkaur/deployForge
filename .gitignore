@@ -64,3 +64,6 @@ terraform.rc
 # Local environment files
 .env
 .env.*
+
+# Owner-only durable local release journal and backend process lock
+.deployforge-state/

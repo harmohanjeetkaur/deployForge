@@ -67,7 +67,7 @@ export function createDeployer({ git, read, write, verify, live, history, conver
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), timeout = 300000, now = Date.now }) {
   let active = false;
   let job = null;
-  async function run(tag, result) {
+  async function run(tag, result, { checkpoint = async () => {}, expectedDigest } = {}) {
     let phase = 'validation';
     const rollback = result.operation === 'rollback';
     const label = rollback ? 'Rollback' : 'Deployment';
@@ -81,6 +81,7 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       if (typeof tag !== 'string' || !/^[a-f0-9]{40}$/.test(tag)) throw new Error('Tag must be a 40-character lowercase hexadecimal SHA');
       const image = await verify(tag);
       if (!image.valid || !image.exists || !image.platformsSupported) throw new Error(image.error || 'Image must exist in GHCR with linux/amd64 and linux/arm64');
+      if (expectedDigest && image.digest !== expectedDigest) throw new Error('Image digest changed after release verification');
       const original = await read();
       const currentTag = helmTag(original);
       const currentImage = await live();
@@ -94,9 +95,12 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       if (await validateGit(git) !== base || await read() !== original) throw new Error('Repository changed during validation');
       phase = 'Helm update';
       const updated = helmTag(original, tag);
+      result.stage = 'helm-write';
+      await checkpoint(result);
       await write(updated);
       phase = 'Git commit';
       result.stage = 'gitops-commit';
+      await checkpoint(result);
       if ((await git(['symbolic-ref', '--short', 'HEAD'])).trim() !== 'main' || (await git(['rev-parse', 'HEAD'])).trim() !== base || await read() !== updated) throw new Error('Repository changed before commit');
       // --only excludes unrelated staged paths; never stage the entire repository.
       await git(['-c', 'core.hooksPath=/dev/null', 'commit', '--only', '-m', `${rollback ? 'rollback' : 'deploy'}: update image tag to ${tag}`, '--', VALUES]);
@@ -104,6 +108,7 @@ export function createDeployer({ git, read, write, verify, live, history, conver
       result.commit = commit;
       result.progress.commitCreated = true;
       result.state = 'in-progress';
+      await checkpoint(result);
       const paths = (await git(['diff-tree', '--no-commit-id', '--name-only', '-r', commit])).trim();
       if (paths !== VALUES || await read() !== updated
         || (await git(['rev-parse', `${commit}^`])).trim() !== base
@@ -111,11 +116,14 @@ export function createDeployer({ git, read, write, verify, live, history, conver
         throw new Error('Unexpected commit parent or file contents; push refused');
       }
       phase = 'Git push';
+      result.stage = 'git-push';
+      await checkpoint(result);
       await git(['push', 'origin', `${commit}:refs/heads/main`]);
       result.state = 'in-progress';
       result.pushed = true;
       result.stage = 'argocd-sync';
       result.message = 'GitOps change pushed; waiting for Kubernetes and ArgoCD';
+      await checkpoint(result);
       phase = 'convergence';
       const deadline = now() + timeout;
       let lastError = '';
@@ -126,8 +134,9 @@ export function createDeployer({ git, read, write, verify, live, history, conver
           result.observation = status;
           Object.assign(result.progress, { argoSynced: Boolean(status.argoSynced), rolloutReady: Boolean(status.rolloutReady), healthy: Boolean(status.healthy) });
           result.stage = !status.argoSynced ? 'argocd-sync' : !status.rolloutReady ? 'kubernetes-rollout' : 'health-verification';
+          await checkpoint(result);
           if (status.failure) throw Object.assign(new Error(status.failure), { terminal: true });
-          if (status.healthy) return Object.assign(result, { state: 'succeeded', stage: 'healthy', success: true, message: `${label} succeeded: target image ready and ArgoCD Synced/Healthy` });
+          if (status.healthy) { Object.assign(result, { state: 'succeeded', stage: 'healthy', success: true, message: `${label} succeeded: target image ready and ArgoCD Synced/Healthy` }); await checkpoint(result); return result; }
           lastError = '';
         } catch (error) { if (error.terminal) throw error; lastError = error.message; }
         await sleep(5000);
@@ -136,17 +145,19 @@ export function createDeployer({ git, read, write, verify, live, history, conver
     } catch (error) {
       Object.assign(result, { state: 'failed', failureStage: result.stage, stage: 'failed', success: false, message: `${phase} failed: ${error.message}. Local changes and any commit are preserved; inspect repository state before retrying.` });
     } finally { result.finishedAt = new Date(now()).toISOString(); active = false; }
+    await checkpoint(result);
     return result;
   }
   return {
+    get busy() { return active; },
     get status() { return job; },
-    async request(tag, operation = 'deploy') {
+    async request(tag, operation = 'deploy', options = {}) {
       if (!['deploy', 'rollback'].includes(operation)) throw Object.assign(new Error('Unknown GitOps operation'), { statusCode: 400 });
       if (active) throw Object.assign(new Error('A deployment is already in progress'), { statusCode: 409 });
       active = true;
       job = { startedAt: new Date(now()).toISOString(), id: crypto.randomUUID(), tag, operation, state: 'requested', stage: 'request-accepted', progress: { requestAccepted: true, commitCreated: false, argoSynced: false, rolloutReady: false, healthy: false }, dryRun: !real, success: false, message: `${operation === 'rollback' ? 'Rollback' : 'Deployment'} requested` };
-      if (!real) return await run(tag, job);
-      void run(tag, job);
+      if (!real) return await run(tag, job, options);
+      void run(tag, job, options).catch(() => { /* Journal failures stop mutations; recovery requires review. */ });
       return { ...job };
     }
   };

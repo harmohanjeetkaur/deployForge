@@ -1,0 +1,20 @@
+{{- /* Opt-in only after the instrumented image is approved and available. */ -}}
+{{- $metrics := .Values.metrics | default dict -}}
+{{- if $metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "deployforge.fullname" . }}-metrics
+  labels:
+    {{- include "deployforge.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "deployforge.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -1,3 +1,7 @@
+import { monitoringStatus } from './monitoring.js';
+import { openReleaseStore } from './release-store.js';
+import { createGitHub } from './github.js';
+import { createReleaseService, createReleaseRouter } from './releases.js';
 import express from 'express';
 import { createLocalSessions } from './local-session.js';
 import { argoSummary } from './cluster-view.js';
@@ -6,10 +10,11 @@ import { buildDeploymentHistory } from './history.js';
 import { verifyImageTag } from './registry.js';
 import cors from 'cors';
 import { execFile } from 'child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'util';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createDeployer, enabled, convergenceStatus, VALUES } from './deployment.js';
+import { createDeployer, enabled, convergenceStatus, validateGit, VALUES } from './deployment.js';
 
 const execFileAsync = promisify(execFile);
 const app = express();
@@ -29,6 +34,12 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+app.get('/api/monitoring/status', async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await monitoringStatus());
+});
+
 
 const NAMESPACE = 'deployforge-gitops';
 const DEPLOYMENT_NAME = 'deployforge';
@@ -186,7 +197,8 @@ app.get('/api/images/verify/:tag', async (req, res) => {
 
 const sessions = createLocalSessions({ token: DEPLOY_TOKEN });
 app.use('/api', sessions.router);
-app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, sessions, real: REAL_DEPLOYMENT, environment: KUBE_CONTEXT }));
+let releaseService;
+app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, sessions, real: REAL_DEPLOYMENT, environment: KUBE_CONTEXT, releaseBusy: () => Boolean(releaseService?.busy) }));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -200,6 +212,29 @@ app.use((error, req, res, next) => {
 export { app };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === fileURLToPath(pathToFileURL(process.argv[1]))) {
+  const store = await openReleaseStore(process.env.DEPLOYFORGE_STATE_DIR || `${PROJECT_ROOT}/.deployforge-state`);
+  // No credential files are read. Both switches and server credentials are mandatory.
+  const workflowDigest = createHash('sha256').update(await readFile(`${PROJECT_ROOT}/.github/workflows/ci.yaml`)).digest('hex');
+  const github = createGitHub({ token: process.env.DEPLOYFORGE_GITHUB_TOKEN, workflowDigest });
+  releaseService = createReleaseService({ store, github, verify: tag => verifyImageTag(tag, fetch, true), deployer,
+    preflight: async repository => {
+      if (repository.adapter !== 'deployforge' || repository.environment !== KUBE_CONTEXT) throw new Error('Registered promotion adapter or target mismatch');
+      await validateGit(executeGit);
+      await getDeploymentStatus();
+    },
+    enabled: REAL_DEPLOYMENT && enabled(process.env.DEPLOYFORGE_ENABLE_RELEASE) && Boolean(DEPLOY_TOKEN) && Boolean(process.env.DEPLOYFORGE_GITHUB_TOKEN) && KUBE_CONTEXT === 'docker-desktop',
+    observe: async (tag, commit) => {
+      const remote = await executeGit(['ls-remote', 'origin', 'refs/heads/main']);
+      if (remote.split(/\s/)[0] !== commit) return { healthy: false, failure: 'Remote Git revision differs; operator review required' };
+      const deployment = JSON.parse(await executeKubectl(['get', 'deployment', DEPLOYMENT_NAME, '-n', NAMESPACE, '-o', 'json']));
+      const argo = JSON.parse(await executeKubectl(['get', 'application', process.env.DEPLOYFORGE_ARGOCD_APP || 'deployforge', '-n', process.env.DEPLOYFORGE_ARGOCD_NAMESPACE || 'argocd', '-o', 'json']));
+      return convergenceStatus(deployment, argo, tag, commit);
+    },
+  });
+  // Mounted after the error handler; router owns its async error responses.
+  app.use('/api', createReleaseRouter({ service: releaseService, github, token: DEPLOY_TOKEN, sessions }));
+  const releaseTimer = setInterval(() => { releaseService.tick().catch(() => { console.error('Release journal unavailable; execution paused'); clearInterval(releaseTimer); }); }, 10000);
+  releaseTimer.unref();
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`DeployForge dashboard server running on http://127.0.0.1:${PORT}`);
   });

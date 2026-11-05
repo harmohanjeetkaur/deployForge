@@ -18,7 +18,7 @@ test('live control center displays actual workload and ArgoCD metadata with GET-
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
   await page.screenshot({ path: '/private/tmp/deployforge-control-mobile.png', fullPage: true })
-  await page.getByRole('link', { name: 'Kubernetes', exact: true }).click()
+  await expect(page.getByRole('link', { name: 'Kubernetes', exact: true })).toHaveCount(0)
   await expect(page.locator('.pod-card')).toHaveCount(live.pods.length)
   await page.getByRole('link', { name: 'Security', exact: true }).click()
   await expect(page.getByText('Security results unavailable')).toBeVisible()

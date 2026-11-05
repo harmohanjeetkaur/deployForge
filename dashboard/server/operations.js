@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 
-export function createOperationRouter({ deployer, token, real = false, environment = 'docker-desktop', sessions }) {
+export function createOperationRouter({ deployer, token, real = false, environment = 'docker-desktop', sessions, releaseBusy = () => false }) {
   const router = Router();
   for (const operation of ['deploy', 'rollback']) router.post(`/${operation}`, async (req, res) => {
     try {
@@ -67,6 +67,7 @@ export function createOperationRouter({ deployer, token, real = false, environme
         if (req.body.environment !== environment) return res.status(400).json({ message: 'Target environment does not match the configured Kubernetes context' });
       }
 
+      if (releaseBusy()) return res.status(409).json({ message: 'A release owns deployment execution; wait for completion or reconcile its state' });
       const result = await deployer.request(tag, operation);
       res.status(result.state === 'failed' ? 400 : result.dryRun ? 200 : 202).json(result);
     } catch (error) {

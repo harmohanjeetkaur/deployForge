@@ -22,6 +22,17 @@ to that IPv4 address. Restart the API after changing backend source.
 
 ## Release workflow
 
+**Create Release** provides the one-click **Create Tag & Deploy** workflow for
+registered repositories. It resolves a branch/full SHA, creates a version tag,
+tracks the exact Actions run, verifies CI evidence and the GHCR digest, and
+automatically invokes the existing GitOps engine. Durable history survives API
+restart. See [architecture, permissions, recovery and offline tests](docs/self-service-releases.md).
+Both `DEPLOYFORGE_ENABLE_RELEASE` and `DEPLOYFORGE_ENABLE_DEPLOY` default to disabled;
+the UI never enables them. CI no longer writes Helm values or deploys on main pushes.
+
+The existing Deployments screen also supports promoting an already published SHA
+or rolling back an eligible retained revision, as described below.
+
 Choose a different image candidate or enter a 40-character immutable SHA. Verify
 its real GHCR availability and both linux/amd64 and linux/arm64 platforms. Click
 Deploy Version or Rollback to review the current and target images, then confirm. A local browser session handles authorization automatically.

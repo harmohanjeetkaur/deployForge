@@ -1,5 +1,12 @@
 # Local GitOps API
 
+The self-service release coordinator adds repository/source lookup, tag creation,
+actual Actions-run tracking, artifact/digest verification, automatic GitOps handoff
+and durable release history. See [self-service releases](../docs/self-service-releases.md)
+for routes, permissions and restart recovery. It is disabled by default and does
+not start Docker/Kubernetes. Existing manual operation jobs remain process-local;
+release-owned promotion checkpoints are durably recorded by the coordinator.
+
 The server binds to 127.0.0.1:3001, restricts CORS to localhost:5173, and requires
 the local dashboard Origin and either an approved local session with CSRF verification
 or a valid operator Bearer credential for deployment/rollback POSTs. Browser
