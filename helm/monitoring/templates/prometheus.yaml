@@ -12,7 +12,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum-config: {{ print (.Files.Get "files/prometheus.yml") (.Files.Get "files/alerts.yml") .Values.scrapesEnabled .Values.syntheticAlert .Values.applicationMetrics.enabled | sha256sum }}
+        checksum-config: {{ print (.Files.Get "files/prometheus.yml") (.Files.Get "files/alerts.yml") (.Files.Get "files/demo-probe.yml") (.Files.Get "files/demo-alerts.yml") .Values.scrapesEnabled .Values.syntheticAlert .Values.applicationMetrics.enabled .Values.demoIncidents.enabled | sha256sum }}
       labels:
         app: prometheus
     spec:

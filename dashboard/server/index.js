@@ -1,3 +1,7 @@
+import { createIncidentCollector } from './incident-collector.js';
+import { createIncidentAI } from './incident-ai.js';
+import { createLocalIncidentAnalysis } from './incident-local.js';
+import { createIncidentRouter } from './incidents.js';
 import { monitoringStatus } from './monitoring.js';
 import { openReleaseStore } from './release-store.js';
 import { createGitHub } from './github.js';
@@ -197,6 +201,11 @@ app.get('/api/images/verify/:tag', async (req, res) => {
 
 const sessions = createLocalSessions({ token: DEPLOY_TOKEN });
 app.use('/api', sessions.router);
+app.use('/api', createIncidentRouter({
+  collector: createIncidentCollector({ kubectl: executeKubectl, monitoring: monitoringStatus }),
+  ai: process.env.DEPLOYFORGE_AI_PROVIDER === 'local' ? createLocalIncidentAnalysis() : createIncidentAI({ key: process.env.OPENAI_API_KEY, model: process.env.DEPLOYFORGE_AI_MODEL || 'gpt-5-mini', enabled: enabled(process.env.DEPLOYFORGE_ENABLE_AI) }),
+  token: DEPLOY_TOKEN, sessions, monitoring: monitoringStatus,
+}));
 let releaseService;
 app.use('/api', createOperationRouter({ deployer, token: DEPLOY_TOKEN, sessions, real: REAL_DEPLOYMENT, environment: KUBE_CONTEXT, releaseBusy: () => Boolean(releaseService?.busy) }));
 

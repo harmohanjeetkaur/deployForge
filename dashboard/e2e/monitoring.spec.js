@@ -34,3 +34,19 @@ test('observability overview renders real summary, trend and alert data without 
   await page.setViewportSize({width:390,height:844})
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
+test('correlates related alerts and keeps technical detail collapsed',async({page})=>{
+ await page.route('**/api/**',route=>{
+  if(handleSession(route))return;
+  const path=new URL(route.request().url()).pathname;
+  if(path==='/api/deploy/config')return route.fulfill({json:executionConfig});
+  if(path==='/api/kubernetes/history')return route.fulfill({json:[]});
+  if(path==='/api/monitoring/status')return route.fulfill({json:{services:[],summary:{ready:3,desired:3,probeSuccess:1},targets:[],trends:{},alerts:[{name:'DeployForgeDemoCrashLoop',pod:'startup-123456789-abcde',state:'firing',demo:true},{name:'DeployForgeDemoReadinessFailure',pod:'endpoint-123456789-abcde',state:'firing',demo:true},{name:'DeployForgeDemoHTTPProbeFailure',instance:'http://endpoint.ns.svc:8080/health',state:'firing',demo:true}],demoProbes:[{instance:'http://endpoint.ns.svc:8080/health',success:0,httpStatus:503}]}});
+  return route.fulfill({json:{}});
+ });
+ await page.goto('/');await page.getByRole('link',{name:'Monitoring',exact:true}).click();
+ await expect(page.locator('.alert-group')).toHaveCount(2);
+ await expect(page.getByText('Endpoint returning errors',{exact:false})).toBeVisible();
+ await expect(page.locator('.alert-source').first()).toBeHidden();
+ await expect(page.locator('.endpoint-details')).not.toHaveAttribute('open');
+ await page.locator('.endpoint-details summary').click();await expect(page.getByText('HTTP 503',{exact:true})).toBeVisible();
+});

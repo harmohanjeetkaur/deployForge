@@ -9,6 +9,8 @@ test('focus recovers configuration and displays actual process operation after r
     if (handleSession(route)) return;
     const path = new URL(route.request().url()).pathname
     expect(route.request().method()).toBe('GET')
+    if (path === '/api/releases') return route.fulfill({ json: { releases: [] } })
+    if (path === '/api/repositories') return route.fulfill({ json: { repositories: [] } })
     if (path === '/api/deploy/config') return route.fulfill({ status: available ? 200 : 503, json: available ? { ...executionConfig, latestOperation: job } : {} })
     return route.fulfill({ json: path.endsWith('/history') ? [] : { currentImage: image, pods: [], desiredReplicas: 3, readyReplicas: 3 } })
   })
@@ -18,13 +20,13 @@ test('focus recovers configuration and displays actual process operation after r
   available = true
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(page.locator('.backend-readiness')).toContainText('Execution enabled')
-  await expect(page.getByRole('status')).toHaveText('Rollback healthy')
+  await expect(page.getByRole('region', { name: 'Deployment progress', exact: true }).getByRole('status')).toHaveText('Rollback healthy')
   await expect(page.locator('.step-complete')).toHaveCount(5)
   await expect(page.locator('.commit-reference')).toContainText(job.commit)
   await expect(page.getByText(/Last rollback/)).toContainText('11/4/2026')
   await page.reload()
   await page.getByRole('link', { name: 'Deployments', exact: true }).click()
-  await expect(page.getByRole('status')).toHaveText('Rollback healthy')
+  await expect(page.getByRole('region', { name: 'Deployment progress', exact: true }).getByRole('status')).toHaveText('Rollback healthy')
   await expect(page.locator('input[type=password]')).toHaveCount(0)
   available = false
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))

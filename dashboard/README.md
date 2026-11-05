@@ -253,11 +253,37 @@ The Security page is read-only and cannot start a scan or a deployment.
 ### UI screenshots and testing evidence
 
 The [main README gallery](../README.md#dashboard-screenshots) includes Overview,
-Create Release, Deployments, Security, Monitoring and Settings. These are live
-GET-only page captures with browser authorization stubbed as pending and operation
-writes blocked; no credentials or connection codes are shown.
+Create Release, Deployments, rollback, Security, Monitoring, AI Troubleshooting
+and Settings. Page captures use current local data. A temporary authorized browser
+collects real evidence and runs local analysis; release/deployment/rollback and
+external model requests are blocked. The capture browser is disconnected afterward.
+The current Security capture shows unavailable report retrieval rather than a passed scan.
 
 The [testing evidence gallery](../docs/testing/README.md) separately includes
 visibly labelled mocked release, deployment and rollback screenshots, actual
 backend/browser test receipts, source links and reproduction commands. Mocked
 success screenshots are not represented as real deployments.
+
+### AI incident troubleshooting
+
+AI Troubleshooting shows healthy application pods alongside isolated failure workloads.
+Collect real evidence, review it, then approve a read-only diagnosis with evidence
+citations. Set `DEPLOYFORGE_AI_PROVIDER=local` for free deterministic evidence rules.
+The UI identifies this source as Local analysis; it is not an LLM response. Leave
+that variable unset and configure the OpenAI credentials for optional model analysis. No command execution or automatic remediation
+is supported. Monitoring includes a separate live incident summary. See the
+[AI setup, demo lifecycle, privacy boundaries and tests](docs/ai-troubleshooting.md).
+The optional demo manifest is `k8s/demo/incident.yaml`; it never selects the main
+application Service. OpenAI model calls remain disabled until server-side configuration.
+
+Overview and Monitoring also show recent observed Kubernetes failures and
+Prometheus alerts, with first/last detection timestamps and pod-specific AI links.
+The optional demo drill combines a CrashLoopBackOff pod, an HTTP-503 readiness
+failure and three labelled local alerts. See the AI guide for resource caps,
+monitoring configuration backups and precise stop/cleanup commands.
+
+The incident UI groups related signals by workload. Logs, raw alert identifiers,
+endpoint checks and full detection history use expandable detail panels. Monitoring
+shows three prioritized scrape targets initially, with the complete list available
+on demand. Controlled fault-injection provenance remains in metadata and source
+evidence rather than repeated badges in the primary view.

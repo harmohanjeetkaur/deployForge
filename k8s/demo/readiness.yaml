@@ -1,0 +1,82 @@
+# A tiny HTTP process that deliberately reports an unavailable demo dependency.
+# No production labels; not selected by the main app Service or ArgoCD app.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployforge-readiness-demo
+  namespace: deployforge-gitops
+  labels:
+    app.kubernetes.io/part-of: deployforge-incident-demo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: deployforge-readiness-demo
+  template:
+    metadata:
+      labels:
+        app: deployforge-readiness-demo
+        app.kubernetes.io/part-of: deployforge-incident-demo
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 2
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: readiness-failure
+          image: ghcr.io/harmohanjeetkaur/deployforge:4f1e3e4b6ea284f7e030c2b0685f7ed67a76a5fd
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -c]
+          args:
+            - |
+              printf '%s\n' 'WARN demo=true scenario=dependency-http-503' \
+                'ERROR demo=true dependency unavailable; HTTP 503 responses configured' \
+                'INFO demo=true incoming readiness/probe requests are logged below'
+              while :; do
+                printf '%s\n' 'ERROR demo=true dependency=offline handler_status=503; awaiting readiness or monitoring probe'
+                printf 'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 24\r\nConnection: close\r\n\r\ndemo dependency offline\n' | /bin/busybox nc -l -p 8080 -w 5
+              done
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /intentionally-unready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 25m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deployforge-readiness-demo
+  namespace: deployforge-gitops
+  labels:
+    app.kubernetes.io/part-of: deployforge-incident-demo
+spec:
+  # Intentional demo-only access to a not-ready pod for external probing.
+  publishNotReadyAddresses: true
+  selector:
+    app: deployforge-readiness-demo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

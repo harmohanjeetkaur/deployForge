@@ -1,281 +1,249 @@
 # DeployForge
 
-**From a Git commit to a verified Kubernetes release, through one dashboard.**
+**A developer portal that takes a Git commit through CI, security scanning, image publication and a verified Kubernetes rollout.**
 
-DeployForge is a platform engineering portfolio project that lets a developer
-select a source commit, create a release, follow its build and security checks,
-and see whether the new version actually became healthy in Kubernetes. It also
-supports deploying existing images, rolling back retained revisions, inspecting
-security reports, and monitoring the application.
+DeployForge is a platform engineering portfolio project. A developer chooses a registered repository, selects a commit and clicks **Create Tag & Deploy**. The backend follows the actual GitHub Actions run, validates its published image, promotes the version through GitOps and checks whether Kubernetes reached the intended healthy state. The same dashboard supports image deployment, rollback, security evidence, monitoring and incident investigation.
 
-**Built with:** React · Express · Go · GitHub Actions · Docker / GHCR · Helm ·
-ArgoCD · Kubernetes · Trivy · Prometheus / Grafana
+**Stack:** React · Express · Go · GitHub Actions · Docker / GHCR · Trivy · Helm · ArgoCD · Kubernetes · Prometheus · Grafana · optional OpenAI
 
-[UI pages](#dashboard-screenshots) · [Workflow walkthrough](#workflow-walkthrough) · [How releases work](#how-a-release-works) ·
-[Testing evidence](docs/testing/README.md) · [Run locally](#run-locally) ·
-[Architecture and setup](dashboard/docs/self-service-releases.md)
+[UI gallery](#dashboard-screenshots) · [Architecture](#how-a-release-works) · [Workflow walkthrough](#workflow-walkthrough) · [Test evidence](docs/testing/README.md) · [Local setup](#run-locally) · [Limitations](#scope-and-limitations)
+
+## Reviewer guide
+
+Start with **Overview**, then **Create Release** and **Deployments** to understand the delivery path. **Security** exposes the CI scan evidence; **Monitoring** and **AI Troubleshooting** show how the running workload is investigated. Screenshots of every page and the rollback view appear directly below—no running cluster or external site is needed to view them.
+
+| Capability | What is implemented |
+| --- | --- |
+| Self-service release | Approved repository, branch/full SHA lookup, version tag, exact workflow tracking and automatic GitOps promotion after verification |
+| Deployment and rollback | Published SHA image verification, current/target confirmation, retained revision selection and health checks |
+| Supply-chain checks | Blocking HIGH/CRITICAL Trivy scans for AMD64 and ARM64, run-attempt validation and image/source provenance |
+| Operational visibility | Readiness, replicas, ArgoCD state, probe trends, scrape health and alerts grouped by workload |
+| Incident investigation | Bounded real pod logs/events, evidence citations and read-only diagnosis; free local rules or optional OpenAI |
+| Recovery and authorization | Durable release journal, idempotent requests, operation locks and terminal-approved browser sessions |
 
 ## The problem it solves
 
-A successful container build does not establish that an application was deployed
-successfully. A release crosses several systems: source control, CI, a container
-registry, deployment configuration, and the running cluster. It can fail between
-any two of them.
-
-DeployForge connects those steps and their evidence in one place. A developer
-chooses **what to release**; CI produces and scans the image; DeployForge promotes
-that verified image through Git; ArgoCD applies the desired state; and the dashboard
-checks the rollout. The result is traceable back to the source commit, CI run,
-image digest, and deployment commit.
+A green build does not prove a successful deployment. Source control, CI, registry publication, desired configuration and the running cluster can disagree. DeployForge connects those systems and their evidence, showing where delivery stopped instead of presenting an accepted request as a healthy release.
 
 ## How a release works
 
-1. Push application code to the registered GitHub repository.
-2. In **Create Release**, select a branch or commit and enter a new version tag.
-3. Click **Create Tag & Deploy** once. DeployForge resolves the commit and creates
-   its Git tag; GitHub Actions tests the application, builds AMD64/ARM64 images,
-   and runs blocking Trivy security scans.
-4. After successful checks, CI publishes to GitHub Container Registry (GHCR).
-   DeployForge verifies the exact run, release evidence, supported platforms,
-   and image digest before automatically updating the Helm image version in Git.
-5. ArgoCD reconciles that Git change into Kubernetes. DeployForge reports success
-   only after the target workload is ready and ArgoCD is synchronized and healthy
-   at the promoted commit.
+1. A developer pushes source code to the registered GitHub repository.
+2. In **Create Release**, choose a branch or full commit SHA and enter a new version tag.
+3. **Create Tag & Deploy** creates the tag. GitHub Actions runs Go tests and vet, builds native AMD64/ARM64 images and scans each image with Trivy.
+4. HIGH/CRITICAL findings—including unfixed vulnerabilities—block publication. Successful tag workflows publish the scanned images, multi-platform index and release evidence to GHCR/Actions.
+5. DeployForge validates the exact workflow run and attempt, source commit, tag, image digest and platform evidence. It then invokes the existing GitOps promotion engine automatically.
+6. The engine changes the Helm image version, commits that desired state and pushes normally to `main`. ArgoCD reconciles it into Kubernetes.
+7. Success requires the intended image, ready replicas and ArgoCD synchronization/health at the promoted Git commit. A timeout or partial result is not success.
 
 ```mermaid
 flowchart LR
-    Developer[Source commit] --> Dashboard[DeployForge: tag release]
-    Dashboard --> CI[GitHub Actions: test / build / scan]
-    CI --> Registry[GHCR: published image]
-    Registry --> Coordinator[DeployForge: verify and promote]
-    Coordinator --> Git[Git: Helm desired state]
+    Source[Developer source commit] --> UI[DeployForge: create tag]
+    UI --> CI[Actions: test, build, scan]
+    CI --> GHCR[GHCR: scanned images]
+    GHCR --> Verify[DeployForge: verify evidence]
+    Verify --> Git[Git: promote Helm image]
     Git --> Argo[ArgoCD: reconcile]
-    Argo --> Cluster[Kubernetes: rollout]
-    Cluster --> Health[DeployForge: verify health]
+    Argo --> K8s[Kubernetes: rollout]
+    K8s --> Health[DeployForge: verify health]
 ```
 
-**CI produces artifacts; DeployForge owns promotion; ArgoCD applies desired state.**
-A normal push to `main` does not independently deploy. GitOps means the desired
-application version lives in Git, so deployment and rollback changes are reviewable
-commits rather than direct edits to the cluster.
+**CI builds and publishes; DeployForge promotes; ArgoCD applies.** CI does not write Helm values or deploy independently. Normal `main` pushes and pull requests run the configured source checks; registry publication is restricted to release-tag pushes. Application/workflow path filters avoid unnecessary branch builds for unrelated edits.
 
 ## Dashboard screenshots
 
-The UI follows the same release lifecycle. **Overview** is the landing page; the
-other pages answer the questions that arise while releasing and operating an app.
+Captured **6 November 2026, Asia/Kolkata**, from the existing local dashboard. These are point-in-time views, not continuous availability guarantees. A temporary authorized browser collected Kubernetes evidence and ran **local rule-based analysis**; it was disconnected afterward. No release, deployment, rollback or external model request was submitted. [Capture receipt](docs/images/capture-receipt.json).
 
-![DeployForge Overview: workload readiness, GitOps state and pod diagnostics](docs/images/overview-dashboard.png)
+### Overview — current workload and recent detections
 
-| Page | What a reviewer can see |
-| --- | --- |
-| **Overview** | Is the workload ready? What does ArgoCD report? Which pods need attention? |
-| **Create Release** | Which commit is being released, and how far has its tag → CI → image → deployment workflow progressed? |
-| **Deployments** | Which published image can be deployed, which revision can be restored, and did the operation complete? |
-| **Security** | What did Trivy actually report for each architecture, and did the HIGH/CRITICAL policy pass? |
-| **Monitoring** | Are probes passing, replicas available, scrape targets healthy, and alerts active? |
-| **Settings** | Is execution enabled on the backend, and is this browser authorized to request changes? |
+Read workload readiness, current image, GitOps state and recent failures without switching between tools. Related signals are grouped by workload, with links into investigation.
 
-### Create Release — one request, complete progress and release history
+![Overview: workload state and recent incident detections](docs/images/overview-dashboard.png)
 
-Tag creation, CI/security, image publication, GitOps promotion, and rollout
-verification each have a separate state. Evidence links open the relevant source
-pages. Failed releases remain visible and do not permanently block a new version.
+### Create Release — one request and traceable release history
 
-![Create Release dashboard](docs/images/create-release-dashboard.png)
+Select an approved repository and source, enter a version and follow tag creation → CI/security → publication → promotion → rollout. Source, workflow, image and GitOps evidence links remain with the release history.
 
+![Create Release: source selection and existing release history](docs/images/create-release-dashboard.png)
 
-### Deployments — existing images, confirmation, progress and rollback history
+### Deployments — promote an already published image
 
-Version labels resolve to immutable source SHA images. Deployment and rollback
-require image verification and a confirmation showing current and target images.
-Rollback selects a previously retained Kubernetes revision and creates a new
-GitOps commit; it does not directly patch Kubernetes.
+Choose an image, verify its availability and review the current and target images before confirming. Progress and retained Kubernetes revision history remain on the same page.
 
-![Deployments dashboard](docs/images/deployments-dashboard.png)
+![Deployments: image selection, progress and retained revisions](docs/images/deployments-dashboard.png)
 
+### Rollback — restore an eligible retained revision
 
-### Security — policy summary, architecture reports and scan provenance
+Rollback produces a new GitOps commit for the selected previous image and follows the same rollout checks. This screenshot only opens the rollback view; it does not perform a rollback.
 
-Reports are downloaded from the exact CI run attempt and validated before display.
-Missing evidence stays unknown. A passing HIGH/CRITICAL policy is not a claim that
-all possible vulnerabilities are absent.
+![Rollback view: retained revision selection](docs/images/rollback-dashboard.png)
 
-![Security dashboard](docs/images/security-dashboard.png)
+### Security — exact CI scan evidence, never assumed clean
 
+The page validates Trivy reports from the selected release’s exact workflow attempt and shows architecture-specific findings, fixes and provenance. **The current capture shows unavailable reports because the running backend could not retrieve GitHub evidence. It is not a passed scan.** The implementation and its error handling are covered by automated tests; restoring backend GitHub access is required to view live reports again.
 
-### Monitoring — application signals, scrape health and active alerts
+![Security: current report retrieval unavailable state](docs/images/security-dashboard.png)
 
-The page reads Prometheus data, including availability probes and probe latency,
-and links to Grafana. Probe latency is distinct from application request latency.
-Unavailable collectors or missing series are shown explicitly.
+### Monitoring — signals first, expandable details
 
-![Monitoring dashboard](docs/images/monitoring-dashboard.png)
+See readiness, available replicas, probe availability/latency, prioritized scrape targets and alert activity. Related alerts are grouped, while raw identifiers and full details remain expandable. Missing metrics stay unavailable rather than becoming zero.
 
+![Monitoring: application signals, targets and grouped alert activity](docs/images/monitoring-dashboard.png)
 
-### Settings — execution configuration and local browser authorization
+### AI Troubleshooting — collect and inspect real evidence
 
-Credentials remain on the server. The browser uses a short-lived local session;
-execution is disabled by default and requires operator configuration.
+Select a workload and collect pod state, events, bounded current/previous logs, ArgoCD metadata and monitoring signals. Review the snapshot before analysis. Controlled failure workloads are isolated from the healthy application; their origins remain in metadata.
 
-![Settings dashboard](docs/images/settings-dashboard.png)
+![Troubleshooting: workload selection and evidence collection](docs/images/ai-troubleshooting-dashboard.png)
 
+### Workload diagnosis — free local analysis with citations
 
-These screenshots use existing local API data. Browser authorization is stubbed
-as pending for read-only capture; no real session is approved and its synthetic
-connection code is omitted. They document a point in time, not continuous health.
+The free mode interprets the real captured evidence with deterministic rules for startup crashes, readiness failures, image pull failures and healthy status. It identifies its source as **Local analysis** and does not represent an LLM response. The screenshot below is an actual local result, not a mocked OpenAI answer.
+
+Optional **OpenAI** mode uses the Responses API with structured output and explicit approval to send the reviewed snapshot. It requires available API credits. Successful live OpenAI diagnosis has **not** been verified; quota failure handling has been tested. Neither mode can execute commands or remediate automatically.
+
+![Completed local diagnosis: startup failure hypothesis, evidence citations and proposed checks](docs/images/ai-troubleshooting-analysis.png)
+
+### Settings — browser authorization and execution configuration
+
+Credentials stay on the backend. The browser uses a terminal-approved, short-lived local session. Execution is disabled by default in code and must be enabled explicitly by the operator; a healthy cluster alone does not enable it.
+
+![Settings: local authorization and backend execution configuration](docs/images/settings-dashboard.png)
 
 ## Workflow walkthrough
 
-The following screenshots are directly visible here, in the order a reviewer
-would follow each operation. **These are automated browser-test captures with
-mocked integrations**, visibly marked on every image. The live UI captures above
-show existing local API data; these test captures demonstrate transitions and
-confirmation safeguards without triggering infrastructure changes.
+The following **automated test screenshots use mocked integrations**. Each image carries a visible test marker. They demonstrate transitions and safeguards without claiming a new live operation. [Assertions, receipts and reproduction commands](docs/testing/README.md).
 
 ### Create Tag & Deploy
 
-**1. Choose the source and release tag.** The developer selects a registered
-repository and commit/branch, then enters a version.
+Choose the source and tag:
 
-![Create Tag and Deploy: source and tag selection — mocked test](docs/images/testing/create-release-input-mock.png)
+![Release input — mocked integrations](docs/images/testing/create-release-input-mock.png)
 
-**2. Follow CI and security progress.** Tag creation, CI, image publication,
-GitOps promotion and rollout verification appear as distinct stages.
+Follow CI and security checks:
 
-![Create Tag and Deploy: CI in progress — mocked test](docs/images/testing/create-release-ci-mock.png)
+![Release CI progress — mocked integrations](docs/images/testing/create-release-ci-mock.png)
 
-**3. Inspect the completed release.** The result includes the source SHA, CI run,
-image digest, deployment commit, ArgoCD state and observed readiness.
+Inspect completion evidence:
 
-![Create Tag and Deploy: completed release evidence — mocked test](docs/images/testing/create-release-success-mock.png)
+![Release healthy completion — mocked integrations](docs/images/testing/create-release-success-mock.png)
 
 ### Deploy an existing image
 
-**1. Review the change before confirming.** Current and target images are shown;
-cancelling this review does not submit an operation.
+Review current and target images:
 
-![Deployment: current and target image confirmation — mocked test](docs/images/testing/deployment-confirmation-mock.png)
+![Deployment confirmation — mocked integrations](docs/images/testing/deployment-confirmation-mock.png)
 
-**2. Watch deployment stages.** Progress distinguishes GitOps commit creation,
-ArgoCD synchronization, Kubernetes rollout and health verification.
+Follow GitOps, ArgoCD and Kubernetes stages:
 
-![Deployment: stages in progress — mocked test](docs/images/testing/deployment-progress-mock.png)
+![Deployment progress — mocked integrations](docs/images/testing/deployment-progress-mock.png)
 
-**3. Confirm observed health.** A successful result requires the final health
-checks rather than merely accepting the request or creating a Git commit.
+Confirm observed health:
 
-![Deployment: healthy completion — mocked test](docs/images/testing/deployment-success-mock.png)
+![Deployment completion — mocked integrations](docs/images/testing/deployment-success-mock.png)
 
 ### Roll back a retained revision
 
-**1. Verify and confirm the rollback target.** The review identifies the current
-image and the eligible previously deployed image to restore.
+Review the rollback target:
 
-![Rollback: current and target image confirmation — mocked test](docs/images/testing/rollback-confirmation-mock.png)
+![Rollback confirmation — mocked integrations](docs/images/testing/rollback-confirmation-mock.png)
 
-**2. Track the rollback rollout.** Restoring a revision creates a new GitOps
-change and follows the same synchronization and health stages.
+Follow synchronization and rollout:
 
-![Rollback: stages in progress — mocked test](docs/images/testing/rollback-progress-mock.png)
+![Rollback progress — mocked integrations](docs/images/testing/rollback-progress-mock.png)
 
-**3. Verify rollback completion.** The UI reports healthy completion after the
-restored target meets the operation’s checks.
+Confirm the restored version is healthy:
 
-![Rollback: healthy completion — mocked test](docs/images/testing/rollback-success-mock.png)
-
-See the [test receipts and reproduction commands](docs/testing/README.md) for the
-assertions, source and logs behind these images. A real in-progress deployment
-or rollback capture is not implied by these mocked test screenshots.
+![Rollback completion — mocked integrations](docs/images/testing/rollback-success-mock.png)
 
 ## Engineering decisions
 
-| Decision | Reason |
+| Decision | Why it matters |
 | --- | --- |
-| One owner for Helm promotion | Prevents CI and the dashboard from competing to update deployment state. |
-| Immutable SHA images and digest checks | Ties the selected source to the published artifact before promotion. |
-| Durable release state and idempotent requests | Preserves progress across Express restarts and avoids recreating tags or blindly repeating uncertain Git writes. |
-| Explicit confirmation and operation locks | Prevents duplicate submissions and overlapping deployment/rollback operations. |
-| Server-side credentials and registered repositories | Keeps tokens out of browser storage and restricts which applications may use the promotion adapter. |
-| Separate build and scan per architecture | Preserves AMD64/ARM64 support; native runners and build caches reduce emulation overhead without removing scans. |
-
-Failures are reported at their stage. A timeout is not success, and an uncertain
-Git push is preserved for inspection. Recovery observes existing state rather
-than automatically repeating a write or rolling back.
+| One owner of Helm promotion | Avoids competing CI/dashboard writes to desired state |
+| Immutable source SHA images and digest verification | Connects source, build artifacts and selected deployment |
+| Durable journal and idempotency | Survives backend restart without recreating tags or blindly repeating uncertain writes |
+| Serialized active operations | Prevents overlapping release/deployment/rollback changes; terminal failures do not permanently block new releases |
+| Preserved Git state on failure | Allows inspection and read-only reconciliation rather than destructive recovery |
+| Approved repositories and server-side secrets | Prevents arbitrary repository deployment and keeps credentials out of browser storage |
+| Native architecture builds and caches | Preserves AMD64/ARM64 checks while reducing emulation overhead |
+| Evidence-bound diagnosis | Separates observed state from hypotheses and never executes suggested fixes |
 
 ## Verification and testing evidence
 
-A recorded live local release, **v1.1.1**, completed tag creation, CI, publication,
-GitOps promotion and healthy rollout. Its history is visible in the Create Release
-capture; its [GitHub Actions run](https://github.com/harmohanjeetkaur/deployForge/actions/runs/42081770680)
-provides the associated build/scan evidence. This verifies the local Docker Desktop
-path, not a production or cloud deployment.
+An existing recorded local release, **v1.1.1**, completed tag creation, CI, publication, GitOps promotion and healthy rollout. Its [Actions run](https://github.com/harmohanjeetkaur/deployForge/actions/runs/42081770680) and saved release history provide the associated evidence. This documents the Docker Desktop path; it is not a claim of production or Azure verification. No new release was run for these screenshots.
 
-All **nine labelled workflow screenshots** are displayed above. The
-[testing evidence guide](docs/testing/README.md) adds actual test logs, test-source
-links and reproduction commands for release, deployment and rollback flows.
+**Latest local validation: 180 backend tests passed; 90 browser tests passed, 4 opt-in tests skipped; dashboard lint and build passed.** Raw receipts are in [Testing evidence](docs/testing/README.md). Backend tests cover release failures, duplicate requests/tags, restart recovery, image validation, rollback safeguards, security provenance, log redaction and both diagnostic providers. Browser tests cover UI state transitions, authorization, confirmations, responsive layouts and error states. External mutations are mocked; opt-in live tests remain separate.
 
-| Recorded local check — 6 November 2026 | Result |
-| --- | --- |
-| Complete backend suite | **148 passed** |
-| Release, deployment and rollback browser suites | **33 passed** |
-| Dashboard lint | **Passed** |
-
-The automated workflow screenshots use **mocked external integrations** and carry
-a visible marker. They verify UI behavior and safeguards without changing a real
-cluster. The test logs and assertions explain what each capture proves; they are
-separate from the recorded live release above.
+The existing GitHub workflow checks the Go application and container artifacts. The local dashboard test results below are separate evidence; they are not described as GitHub CI checks.
 
 ## Run locally
 
-Use Node.js 24+, npm, and Google Chrome for browser tests. From the repository root:
+Use Node.js 24+ and npm. Google Chrome is used for browser tests. From the repository root:
 
 ```sh
 npm ci --prefix dashboard
 npm ci --prefix dashboard/server
 
-# Terminal 1: start the backend with execution disabled.
-env -u DEPLOYFORGE_ENABLE_RELEASE -u DEPLOYFORGE_ENABLE_DEPLOY \
-  npm start --prefix dashboard/server
+# Terminal 1: free local diagnosis; release/deployment execution stays disabled.
+DEPLOYFORGE_AI_PROVIDER=local \
+DEPLOYFORGE_ENABLE_RELEASE=false \
+DEPLOYFORGE_ENABLE_DEPLOY=false \
+npm start --prefix dashboard/server
 
-# Terminal 2: open http://localhost:5173 after Vite starts.
+# Terminal 2: open http://localhost:5173.
 npm run dev --prefix dashboard
 ```
 
-The API binds to `127.0.0.1:3001`. UI development and mocked tests can run with
-Docker/Kubernetes stopped. Live workload and monitoring views need their running
-integrations. Real releases additionally need approved GitHub API access, Git push
-credentials, cluster access, and explicit backend execution configuration.
+The API binds to `127.0.0.1:3001`. This starts the UI/API without infrastructure installation. Kubernetes views need an accessible cluster; monitoring needs its existing collectors/port-forwards. UI development and mocked tests work with Docker/Kubernetes stopped.
 
-- [Dashboard/operator guide](dashboard/README.md): sessions, execution flags, stage links, monitoring port-forwards and recovery.
-- [Release architecture](dashboard/docs/self-service-releases.md): API contract, permissions, evidence validation and restart behavior.
-- [Application observability](dashboard/docs/application-observability.md): instrumentation and collection setup.
-- [Sample Go API](app/README.md): endpoints, local execution and Go tests.
-- [Reproduce the evidence](docs/testing/README.md#reproduce): test and screenshot commands.
+Evidence collection and local diagnosis still require operator authentication. If the private token is already provisioned, load it into the backend environment before starting:
 
-## Scope and next steps
+```sh
+export DEPLOYFORGE_DEPLOY_TOKEN="$(cat "$HOME/.deployforge-secrets/deploy-token")"
+```
 
-The implemented promotion adapter supports the registered **DeployForge**
-application. Repository configuration is structured for extension, but arbitrary
-repositories cannot deploy into the cluster. The current authentication model is
-for a trusted local operator, not a hosted multi-user service.
+Never print or commit this credential. Use owner-only permissions (directory `0700`, file `0600`). In Settings, obtain the browser code and approve it from another trusted terminal:
 
-Release history and release-owned promotion checkpoints are durable. Standalone
-manual-operation status is process-local. Rollback depends on retained Kubernetes
-revisions and cannot undo database migrations or external state. The sample Go
-workload deliberately stores tasks in memory.
+```sh
+npm run authorize --prefix dashboard/server -- <browser-connection-code>
+```
 
-Azure Terraform definitions are included; cloud deployment is not claimed as
-verified. AI-powered Kubernetes incident troubleshooting remains planned.
+The code is not a credential. Backend restart invalidates browser sessions, so reconnect afterward. Stop Vite, the backend or individual port-forwards with **Ctrl+C** in their owning terminal; avoid restarting during active operations.
 
-## Code map
+Live releases additionally require a server-side GitHub token, repository-scoped permissions, Git push credentials, a clean synchronized working tree, cluster/ArgoCD reads and both explicit execution flags. Do not enable these just to browse the UI. Follow the [operator guide](dashboard/README.md) and [release setup](dashboard/docs/self-service-releases.md).
+
+For OpenAI mode, unset `DEPLOYFORGE_AI_PROVIDER`, load `OPENAI_API_KEY` privately and set `DEPLOYFORGE_ENABLE_AI=true`; `DEPLOYFORGE_AI_MODEL` defaults to `gpt-5-mini`. OpenAI errors never silently fall back to local results. [Diagnosis setup and boundaries](dashboard/docs/ai-troubleshooting.md).
+
+### Reproduce local checks
+
+```sh
+npm test --prefix dashboard/server
+npm run lint --prefix dashboard
+npm run build --prefix dashboard
+npm run test:e2e --prefix dashboard
+cd app && go test ./...
+```
+
+## Scope and limitations
+
+The first fully implemented promotion adapter targets the registered DeployForge application. Additional repositories require explicit configuration and an appropriate adapter; arbitrary repositories cannot deploy. Authentication is designed for a trusted local operator, not a hosted multi-user service.
+
+Release history/checkpoints are durable; standalone manual-operation status and incident snapshots/history are process-local. A rollback depends on retained Kubernetes revisions and does not undo database migrations or external state. The sample Go task API stores data in memory.
+
+Optional fault-injection manifests create isolated startup/readiness failures with resource caps; they are not spontaneous production incidents. Missing monitoring or security evidence is shown explicitly. Free local diagnosis is deterministic, not AI inference. A successful real OpenAI response and Azure deployment remain unverified.
+
+## Code map and deeper documentation
 
 | Path | Responsibility |
 | --- | --- |
-| [`dashboard/src/`](dashboard/src/) | React screens, evidence links, configuration and session handling |
-| [`dashboard/server/`](dashboard/server/) | Express API, release coordinator, image verification and GitOps engine |
-| [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) | Go checks, native image builds, blocking scans and GHCR publication |
-| [`helm/deployforge/`](helm/deployforge/) | Application desired state and immutable image selection |
-| [`helm/monitoring/`](helm/monitoring/) | Prometheus, Grafana, alerts and collector workloads |
-| [`app/`](app/) | Go task API, probes, metrics and container build |
+| [`dashboard/src/`](dashboard/src/) | React pages, sessions, progress links and evidence views |
+| [`dashboard/server/`](dashboard/server/) | Express APIs, release coordinator, GitOps engine and diagnosis providers |
+| [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) | Go checks, native builds, blocking Trivy scans and release publication |
+| [`app/`](app/) | Sample Go task API, probes, metrics and Docker build |
+| [`helm/deployforge/`](helm/deployforge/) | Application desired state |
+| [`helm/monitoring/`](helm/monitoring/) | Prometheus, Grafana, alerts and exporters |
+| [`k8s/demo/`](k8s/demo/) | Isolated fault-injection workloads |
 | [`terraform/`](terraform/) | Azure infrastructure definitions |
-| [`docs/testing/`](docs/testing/) | Test receipts and labelled workflow evidence |
+| [`docs/testing/`](docs/testing/) | Test receipts and labelled workflow captures |
+
+[Dashboard/operator guide](dashboard/README.md) · [Release architecture](dashboard/docs/self-service-releases.md) · [Incident troubleshooting](dashboard/docs/ai-troubleshooting.md) · [Application observability](dashboard/docs/application-observability.md) · [Go API](app/README.md)

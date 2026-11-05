@@ -1,3 +1,4 @@
+import { IncidentSummary } from './IncidentsPage.jsx'
 import { executionState } from './execution-state.js'
 
 const shortImage = image => image?.split(':').at(-1) || 'Unavailable'
@@ -35,6 +36,7 @@ export function Overview({ data, loading, error, history, lastOperation, config,
         <Metric label="Kubernetes revision" detail="Deployment revision · not a Git commit">{revision ? `#${revision}` : 'Unavailable'}</Metric>
         <Metric label="Ready running pods" detail={`${data?.pods?.length ?? 0} pods reported`}>{healthyPods(data?.pods || []).length}</Metric>
       </section>
+      <IncidentSummary onNavigate={onNavigate} />
       <div className="overview-grid">
         <section className="control-panel"><div className="panel-heading"><h3>Current release</h3><Badge good={ready} warning={!ready}>{ready ? 'Replicas ready' : 'Attention'}</Badge></div><p className="field-caption">DEPLOYED IMAGE TAG</p><code className="release-image">{shortImage(data?.currentImage)}</code><dl className="facts-grid"><div><dt>Namespace</dt><dd>{value(data?.namespace)}</dd></div><div><dt>Deployment</dt><dd>{value(data?.deploymentName)}</dd></div><div><dt>Environment</dt><dd>{value(config?.environment)}</dd></div><div><dt>Execution mode</dt><dd>{executionState(config, configError).label}</dd></div></dl><button className="btn btn-secondary" onClick={() => onNavigate('deployments')}>Manage releases →</button></section>
         <section id="gitops-reconciliation" className="control-panel"><div className="panel-heading"><h3>GitOps reconciliation</h3><Badge good={argo?.health === 'Healthy'}>{argo?.health || 'Unavailable'}</Badge></div>{argo ? <><dl className="stacked-facts"><div><dt>Application</dt><dd>{value(argo.application)}</dd></div><div><dt>Synced Git revision</dt><dd><code>{value(argo.revision)}</code></dd></div><div><dt>Last sync operation</dt><dd>{value(argo.operation)}</dd></div></dl>{argo.conditions?.length > 0 && <p className="state-warning">ArgoCD reports: {argo.conditions.map(c => c.type).join(', ')}</p>}</> : <div className="data-state">Live ArgoCD state is unavailable. No sync or health status is inferred from pod readiness.</div>}</section>

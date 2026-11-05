@@ -7,6 +7,9 @@ alerting:
     - static_configs:
         - targets: [alertmanager:9093]
 scrape_configs:
+{{ if .Values.demoIncidents.enabled }}
+  - {{ .Files.Get "files/demo-probe.yml" | nindent 4 | trim }}
+{{ end }}
 {{ if .Values.scrapesEnabled }}
 {{ if .Values.applicationMetrics.enabled }}
   # SRV discovery returns a separate endpoint for every ready replica. No API/RBAC token.
@@ -51,5 +54,7 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox-exporter:9115
 {{ else }}
+{{ if not .Values.demoIncidents.enabled }}
   []
+{{ end }}
 {{ end }}

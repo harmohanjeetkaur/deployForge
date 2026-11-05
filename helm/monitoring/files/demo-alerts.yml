@@ -1,0 +1,26 @@
+name: deployforge-demo-incidents
+rules:
+  - alert: DeployForgeDemoCrashLoop
+    expr: kube_pod_container_status_waiting_reason{namespace="deployforge-gitops",pod=~"deployforge-incident-demo-.*",reason="CrashLoopBackOff"} == 1
+    for: 30s
+    labels:
+      severity: warning
+      demo: 'true'
+    annotations:
+      summary: Intentional demo startup failure; inspect missing-config logs
+  - alert: DeployForgeDemoReadinessFailure
+    expr: kube_pod_status_ready{namespace="deployforge-gitops",pod=~"deployforge-readiness-demo-.*",condition="false"} == 1
+    for: 30s
+    labels:
+      severity: warning
+      demo: 'true'
+    annotations:
+      summary: Intentional demo readiness failure; HTTP probe returns 503
+  - alert: DeployForgeDemoHTTPProbeFailure
+    expr: probe_success{job="demo-incident-probes"} == 0
+    for: 30s
+    labels:
+      severity: warning
+      demo: 'true'
+    annotations:
+      summary: Intentional demo endpoint fails Blackbox HTTP probing

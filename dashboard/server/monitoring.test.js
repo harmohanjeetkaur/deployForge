@@ -42,3 +42,12 @@ test('live summaries and chart points preserve unavailable data and exclude NaN'
   assert.equal(r.alerts[0].state, 'pending');
   assert.equal(r.targets[0].duration, 0.01);
 });
+test('demo probe failures preserve actual HTTP status without changing application health',async()=>{
+ const m=await monitoringStatus(async url=>{
+  const u=new URL(url),q=u.searchParams.get('query')||'';let data={};
+  if(u.pathname.endsWith('/targets'))data={activeTargets:[{health:'up'}]};
+  else if(u.pathname.endsWith('/alerts'))data={alerts:[{labels:{alertname:'DemoProbe',demo:'true',severity:'warning'},state:'firing',annotations:{summary:'Intentional demo'}}]};
+  else data={result:[{metric:{instance:'demo-endpoint'},value:[1,q.includes('probe_http_status_code')?'404':q.includes('demo-incident-probes')?'0':'1']}]};
+  return {ok:true,json:async()=>({status:'success',data})};
+ });assert.equal(m.demoProbes[0].success,0);assert.equal(m.demoProbes[0].httpStatus,404);assert.equal(m.summary.probeSuccess,1);assert.equal(m.alerts[0].demo,true);
+});

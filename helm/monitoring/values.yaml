@@ -3,3 +3,6 @@ syntheticAlert: false
 # Enable only AFTER each running Go pod exposes the instrumented /metrics endpoint.
 applicationMetrics:
   enabled: false
+# Optional labelled failure scenarios; never enabled by default.
+demoIncidents:
+  enabled: false

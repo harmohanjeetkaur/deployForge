@@ -1,0 +1,55 @@
+{
+  "capturedAt": "2026-11-05T20:19:03.062Z",
+  "pages": [
+    {
+      "page": "Overview",
+      "file": "overview-dashboard.png",
+      "errors": []
+    },
+    {
+      "page": "Create Release",
+      "file": "create-release-dashboard.png",
+      "errors": []
+    },
+    {
+      "page": "Deployments",
+      "file": "deployments-dashboard.png",
+      "errors": []
+    },
+    {
+      "page": "Rollback",
+      "file": "rollback-dashboard.png"
+    },
+    {
+      "page": "Security",
+      "file": "security-dashboard.png",
+      "errors": [
+        "Security reports unavailable. Check server GitHub Actions read permission, artifact retention, and that the backend has loaded the security API."
+      ]
+    },
+    {
+      "page": "Monitoring",
+      "file": "monitoring-dashboard.png",
+      "errors": []
+    },
+    {
+      "page": "AI Troubleshooting",
+      "file": "ai-troubleshooting-dashboard.png",
+      "errors": []
+    },
+    {
+      "page": "Local workload diagnosis",
+      "file": "ai-troubleshooting-analysis.png",
+      "source": "Actual local rule-based analysis of captured Kubernetes evidence"
+    },
+    {
+      "page": "Settings",
+      "file": "settings-dashboard.png",
+      "errors": []
+    }
+  ],
+  "blockedWrites": 0,
+  "operationsSubmitted": 0,
+  "pageErrors": [],
+  "captureSessionDisconnected": true
+}

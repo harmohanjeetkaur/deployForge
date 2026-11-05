@@ -53,3 +53,7 @@ groups:
     annotations:
       summary: No healthy DeployForge API metrics targets for 2m
 {{ end }}
+
+{{ if .Values.demoIncidents.enabled }}
+- {{ .Files.Get "files/demo-alerts.yml" | nindent 2 | trim }}
+{{ end }}

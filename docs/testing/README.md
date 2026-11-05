@@ -1,15 +1,16 @@
 # Testing evidence
 
-Captured on **6 November 2026 (Asia/Kolkata)** against baseline commit `3846a3d`
-plus the documentation-capture helper and test screenshot checkpoints in this
-working tree. These results describe this local run, not a GitHub Actions result.
+Refreshed on **6 November 2026 (Asia/Kolkata)** against the current working tree,
+including incident troubleshooting, local analysis and monitoring improvements.
+These are local results, not a new GitHub Actions run. External release/deployment
+integrations are mocked; opt-in live suites were not enabled.
 
 ## Results and receipts
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Complete Express/backend test suite | 148 passed, 0 failed | [Actual backend output](backend-results.txt) |
-| Release, deployment and rollback browser suites | 33 passed, 0 failed | [Actual browser output](browser-results.txt) |
+| Complete Express/backend test suite | 180 passed, 0 failed | [Actual backend output](backend-results.txt) |
+| Complete browser suite | 90 passed, 0 failed; 4 opt-in tests skipped | [Actual browser output](browser-results.txt) |
 | Dashboard lint | Passed | `npm run lint --prefix dashboard` |
 
 Backend and browser tests mock external mutations. Browser fixtures intercept API
@@ -22,7 +23,7 @@ linked test source and logs provide their context.
 All workflow images below have a visible **AUTOMATED TEST · MOCKED INTEGRATIONS ·
 NO LIVE DEPLOYMENT** marker. Fictional commit IDs, run IDs and timestamps in these
 images are test fixtures. The [main README gallery](../../README.md#dashboard-screenshots)
-contains separate read-only captures of all six pages using existing live API data.
+contains separate read-only captures of all seven pages plus the rollback view and a completed local diagnosis using existing live API data.
 
 ## Create Tag & Deploy
 
@@ -101,8 +102,7 @@ From the repository root, with dashboard dependencies and Google Chrome installe
 ```sh
 npm test --prefix dashboard/server
 npm run lint --prefix dashboard
-DEPLOYFORGE_DOC_SCREENSHOTS=1 npm run test:e2e --prefix dashboard -- \
-  releases.spec.js production-ui.spec.js rollback.spec.js
+DEPLOYFORGE_DOC_SCREENSHOTS=1 npm run test:e2e --prefix dashboard
 ```
 
 The screenshot switch only adds captures to already mocked tests. Omitting it
@@ -117,9 +117,31 @@ running with the relevant read integrations available, then run:
 DEPLOYFORGE_CAPTURE_UI=1 node scripts/capture-ui-docs.mjs
 ```
 
-This separate helper starts no services, approves no browser session, blocks
-non-GET operation requests, and never clicks action confirmations. Session
-responses are stubbed as pending so no connection codes appear. All other page
-data comes from existing GET APIs. It stops if a required API returns an error.
-It writes six screenshots under `docs/images/`; timestamps and current state
-will naturally differ between captures.
+The helper starts no infrastructure and blocks release/deployment/rollback writes.
+For the seven page views, rollback view and an actual **local** diagnosis, explicitly
+opt into a temporary browser session:
+
+```sh
+DEPLOYFORGE_CAPTURE_UI=1 DEPLOYFORGE_CAPTURE_LOCAL_ANALYSIS=1 \
+  node scripts/capture-ui-docs.mjs
+```
+
+This mode requires `DEPLOYFORGE_AI_PROVIDER=local` on the existing backend and the
+owner-only operator credential. It approves only its own temporary browser,
+collects real pod evidence and runs local rules, then disconnects the browser.
+No external AI call is permitted. Credentials are never captured. All nine views
+and current errors are recorded in [the capture receipt](../images/capture-receipt.json).
+The Security page currently shows unavailable GitHub report retrieval, not a clean
+scan. No live deployment or rollback was performed for documentation.
+
+## Incident analysis coverage
+
+[Backend tests](../../dashboard/server/incidents.test.js) check evidence bounds,
+credential redaction, consent, authorization, expiry, request deduplication,
+structured OpenAI output and safe quota/rate-limit handling with mocked responses.
+[Local analysis tests](../../dashboard/server/incident-local.test.js) verify
+startup, readiness, image pull, healthy and unknown cases without model calls.
+[Browser tests](../../dashboard/e2e/incidents.spec.js) exercise evidence preview,
+approval, citations, provider errors and accurate local analysis attribution.
+
+![Actual local diagnosis using captured Kubernetes evidence](../images/ai-troubleshooting-analysis.png)

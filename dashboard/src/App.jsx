@@ -1,3 +1,4 @@
+import IncidentsPage from './IncidentsPage.jsx'
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import DeploymentWorkspace from './DeploymentWorkspace.jsx'
@@ -25,6 +26,7 @@ function App() {
   const [candidateError, setCandidateError] = useState(null)
   const [verificationResult, setVerificationResult] = useState(null)
   const [verifying, setVerifying] = useState(false)
+  const [incidentTarget, setIncidentTarget] = useState(null)
   const [currentPage, setCurrentPage] = useState('overview')
   const verificationRequestIdRef = useRef(0)
   const historyRequestIdRef = useRef(0)
@@ -66,8 +68,9 @@ function App() {
     setPreflightError(null)
     fetchDeploymentConfig()
     if (page !== 'deployments') setShowDeployConfirm(false)
+    if (page === 'incidents') setIncidentTarget(section || null)
     setCurrentPage(page)
-    if (section) requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: 'start' })))
+    if (section && page !== 'incidents') requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ block: 'start' })))
   }
 
   // Image candidates are verified against GHCR before either operation.
@@ -447,6 +450,7 @@ function App() {
           <a href="#" aria-current={currentPage === 'deployments' ? 'page' : undefined} className={`nav-item ${currentPage === 'deployments' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('deployments') }}>Deployments</a>
           <a href="#" aria-current={currentPage === 'security' ? 'page' : undefined} className={`nav-item ${currentPage === 'security' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('security') }}>Security</a>
           <a href="#" aria-current={currentPage === 'monitoring' ? 'page' : undefined} className={`nav-item ${currentPage === 'monitoring' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('monitoring') }}>Monitoring</a>
+          <a href="#" aria-current={currentPage === 'incidents' ? 'page' : undefined} className={`nav-item ${currentPage === 'incidents' ? 'active' : ''}`} onClick={e => { e.preventDefault(); navigate('incidents') }}>AI Troubleshooting</a>
           <a href="#" aria-current={currentPage === 'settings' ? 'page' : undefined} className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`} onClick={(e) => { e.preventDefault(); navigate('settings') }}>Settings</a>
         </nav>
       </aside>
@@ -486,7 +490,8 @@ function App() {
 
         {currentPage === 'releases' && <CreateRelease session={session} onAuthorizationError={rejectSession} onNavigate={navigate} />}
         {currentPage === 'security' && <SecurityPage />}
-        {currentPage === 'monitoring' && <MonitoringPage />}
+        {currentPage === 'monitoring' && <MonitoringPage onNavigate={navigate} />}
+        {currentPage === 'incidents' && <IncidentsPage initialPod={incidentTarget} session={session} onAuthorizationError={rejectSession} />}
 
         {currentPage === 'settings' && (
           <section className="section">

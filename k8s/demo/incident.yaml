@@ -1,0 +1,64 @@
+# Intentional demo failure. This selector does not match the main app Service.
+# Reuses the existing application image; no new infrastructure or image build.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployforge-incident-demo
+  namespace: deployforge-gitops
+  labels:
+    app.kubernetes.io/part-of: deployforge-incident-demo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: deployforge-incident-demo
+  template:
+    metadata:
+      labels:
+        app: deployforge-incident-demo
+        app.kubernetes.io/part-of: deployforge-incident-demo
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 2
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: startup-failure
+          image: ghcr.io/harmohanjeetkaur/deployforge:4f1e3e4b6ea284f7e030c2b0685f7ed67a76a5fd
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -c]
+          args:
+            - |
+              if [ -z "${DEMO_REQUIRED_CONFIG:-}" ]; then
+                printf '%s\n' 'INFO demo=true component=startup scenario=missing-config' \
+                  'ERROR demo=true required setting DEMO_REQUIRED_CONFIG is absent' \
+                  'FATAL demo=true startup aborted with exit code 1; intentional interview demo'
+                sleep 2
+                exit 1
+              fi
+              printf '%s\n' 'INFO demo=true required configuration is present; starting application'
+              exec /app/deployforge
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 25m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
