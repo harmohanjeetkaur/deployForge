@@ -11,7 +11,7 @@ security reports, and monitoring the application.
 **Built with:** React · Express · Go · GitHub Actions · Docker / GHCR · Helm ·
 ArgoCD · Kubernetes · Trivy · Prometheus / Grafana
 
-[UI walkthrough](#dashboard-screenshots) · [How releases work](#how-a-release-works) ·
+[UI pages](#dashboard-screenshots) · [Workflow walkthrough](#workflow-walkthrough) · [How releases work](#how-a-release-works) ·
 [Testing evidence](docs/testing/README.md) · [Run locally](#run-locally) ·
 [Architecture and setup](dashboard/docs/self-service-releases.md)
 
@@ -75,8 +75,7 @@ other pages answer the questions that arise while releasing and operating an app
 | **Monitoring** | Are probes passing, replicas available, scrape targets healthy, and alerts active? |
 | **Settings** | Is execution enabled on the backend, and is this browser authorized to request changes? |
 
-<details>
-<summary>Create Release — one request, complete progress and release history</summary>
+### Create Release — one request, complete progress and release history
 
 Tag creation, CI/security, image publication, GitOps promotion, and rollout
 verification each have a separate state. Evidence links open the relevant source
@@ -84,10 +83,8 @@ pages. Failed releases remain visible and do not permanently block a new version
 
 ![Create Release dashboard](docs/images/create-release-dashboard.png)
 
-</details>
 
-<details>
-<summary>Deployments — existing images, confirmation, progress and rollback history</summary>
+### Deployments — existing images, confirmation, progress and rollback history
 
 Version labels resolve to immutable source SHA images. Deployment and rollback
 require image verification and a confirmation showing current and target images.
@@ -96,10 +93,8 @@ GitOps commit; it does not directly patch Kubernetes.
 
 ![Deployments dashboard](docs/images/deployments-dashboard.png)
 
-</details>
 
-<details>
-<summary>Security — policy summary, architecture reports and scan provenance</summary>
+### Security — policy summary, architecture reports and scan provenance
 
 Reports are downloaded from the exact CI run attempt and validated before display.
 Missing evidence stays unknown. A passing HIGH/CRITICAL policy is not a claim that
@@ -107,10 +102,8 @@ all possible vulnerabilities are absent.
 
 ![Security dashboard](docs/images/security-dashboard.png)
 
-</details>
 
-<details>
-<summary>Monitoring — application signals, scrape health and active alerts</summary>
+### Monitoring — application signals, scrape health and active alerts
 
 The page reads Prometheus data, including availability probes and probe latency,
 and links to Grafana. Probe latency is distinct from application request latency.
@@ -118,21 +111,81 @@ Unavailable collectors or missing series are shown explicitly.
 
 ![Monitoring dashboard](docs/images/monitoring-dashboard.png)
 
-</details>
 
-<details>
-<summary>Settings — execution configuration and local browser authorization</summary>
+### Settings — execution configuration and local browser authorization
 
 Credentials remain on the server. The browser uses a short-lived local session;
 execution is disabled by default and requires operator configuration.
 
 ![Settings dashboard](docs/images/settings-dashboard.png)
 
-</details>
 
 These screenshots use existing local API data. Browser authorization is stubbed
 as pending for read-only capture; no real session is approved and its synthetic
 connection code is omitted. They document a point in time, not continuous health.
+
+## Workflow walkthrough
+
+The following screenshots are directly visible here, in the order a reviewer
+would follow each operation. **These are automated browser-test captures with
+mocked integrations**, visibly marked on every image. The live UI captures above
+show existing local API data; these test captures demonstrate transitions and
+confirmation safeguards without triggering infrastructure changes.
+
+### Create Tag & Deploy
+
+**1. Choose the source and release tag.** The developer selects a registered
+repository and commit/branch, then enters a version.
+
+![Create Tag and Deploy: source and tag selection — mocked test](docs/images/testing/create-release-input-mock.png)
+
+**2. Follow CI and security progress.** Tag creation, CI, image publication,
+GitOps promotion and rollout verification appear as distinct stages.
+
+![Create Tag and Deploy: CI in progress — mocked test](docs/images/testing/create-release-ci-mock.png)
+
+**3. Inspect the completed release.** The result includes the source SHA, CI run,
+image digest, deployment commit, ArgoCD state and observed readiness.
+
+![Create Tag and Deploy: completed release evidence — mocked test](docs/images/testing/create-release-success-mock.png)
+
+### Deploy an existing image
+
+**1. Review the change before confirming.** Current and target images are shown;
+cancelling this review does not submit an operation.
+
+![Deployment: current and target image confirmation — mocked test](docs/images/testing/deployment-confirmation-mock.png)
+
+**2. Watch deployment stages.** Progress distinguishes GitOps commit creation,
+ArgoCD synchronization, Kubernetes rollout and health verification.
+
+![Deployment: stages in progress — mocked test](docs/images/testing/deployment-progress-mock.png)
+
+**3. Confirm observed health.** A successful result requires the final health
+checks rather than merely accepting the request or creating a Git commit.
+
+![Deployment: healthy completion — mocked test](docs/images/testing/deployment-success-mock.png)
+
+### Roll back a retained revision
+
+**1. Verify and confirm the rollback target.** The review identifies the current
+image and the eligible previously deployed image to restore.
+
+![Rollback: current and target image confirmation — mocked test](docs/images/testing/rollback-confirmation-mock.png)
+
+**2. Track the rollback rollout.** Restoring a revision creates a new GitOps
+change and follows the same synchronization and health stages.
+
+![Rollback: stages in progress — mocked test](docs/images/testing/rollback-progress-mock.png)
+
+**3. Verify rollback completion.** The UI reports healthy completion after the
+restored target meets the operation’s checks.
+
+![Rollback: healthy completion — mocked test](docs/images/testing/rollback-success-mock.png)
+
+See the [test receipts and reproduction commands](docs/testing/README.md) for the
+assertions, source and logs behind these images. A real in-progress deployment
+or rollback capture is not implied by these mocked test screenshots.
 
 ## Engineering decisions
 
@@ -157,10 +210,9 @@ capture; its [GitHub Actions run](https://github.com/harmohanjeetkaur/deployForg
 provides the associated build/scan evidence. This verifies the local Docker Desktop
 path, not a production or cloud deployment.
 
-The [testing evidence gallery](docs/testing/README.md) contains **nine labelled
-workflow screenshots**, actual test logs, test-source links and reproduction
-commands for release creation, deployment confirmation/progress/success, and
-rollback confirmation/progress/success.
+All **nine labelled workflow screenshots** are displayed above. The
+[testing evidence guide](docs/testing/README.md) adds actual test logs, test-source
+links and reproduction commands for release, deployment and rollback flows.
 
 | Recorded local check — 6 November 2026 | Result |
 | --- | --- |

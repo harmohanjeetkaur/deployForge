@@ -32,26 +32,20 @@ checks digest/run/health evidence, and retains history after navigation. Other
 cases cover disabled execution, security failure, unauthorized sessions, and
 blocking active work without blocking failed/review-required history.
 
-<details>
-<summary>Source and version selection</summary>
+### Source and version selection
 
 ![Create release inputs — mocked test](../images/testing/create-release-input-mock.png)
 
-</details>
 
-<details>
-<summary>CI in progress</summary>
+### CI in progress
 
 ![Create release CI — mocked test](../images/testing/create-release-ci-mock.png)
 
-</details>
 
-<details>
-<summary>Release completes with image and rollout evidence</summary>
+### Release completes with image and rollout evidence
 
 ![Create release success — mocked test](../images/testing/create-release-success-mock.png)
 
-</details>
 
 ## Deploy an existing image
 
@@ -62,26 +56,20 @@ health verification independently before accepting success. Additional cases
 reject simulation responses and missing health proof, recover authorization,
 and guard duplicate confirmation.
 
-<details>
-<summary>Deployment confirmation</summary>
+### Deployment confirmation
 
 ![Deployment review — mocked test](../images/testing/deployment-confirmation-mock.png)
 
-</details>
 
-<details>
-<summary>Deployment in progress</summary>
+### Deployment in progress
 
 ![Deployment progress — mocked test](../images/testing/deployment-progress-mock.png)
 
-</details>
 
-<details>
-<summary>Deployment healthy</summary>
+### Deployment healthy
 
 ![Deployment success — mocked test](../images/testing/deployment-success-mock.png)
 
-</details>
 
 ## Roll back a retained revision
 
@@ -91,26 +79,20 @@ exactly one authenticated rollback request. They also cover requested/in-progres
 succeeded states, timeouts, authentication errors, invalid/current/unretained
 revisions, changing selections and cancelling confirmation without submission.
 
-<details>
-<summary>Rollback confirmation</summary>
+### Rollback confirmation
 
 ![Rollback review — mocked test](../images/testing/rollback-confirmation-mock.png)
 
-</details>
 
-<details>
-<summary>Rollback in progress</summary>
+### Rollback in progress
 
 ![Rollback progress — mocked test](../images/testing/rollback-progress-mock.png)
 
-</details>
 
-<details>
-<summary>Rollback healthy</summary>
+### Rollback healthy
 
 ![Rollback success — mocked test](../images/testing/rollback-success-mock.png)
 
-</details>
 
 ## Reproduce
 
