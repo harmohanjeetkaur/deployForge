@@ -9,16 +9,16 @@ on:
     branches: [main]
     paths: ['app/**', '.github/workflows/ci.yaml']
 
-# Serialize publication, without cancelling a release already in progress.
+# Serialize releases; superseded branch/PR CI must not queue ahead of releases.
 concurrency:
-  group: deployforge-artifacts-${{ github.repository }}
-  cancel-in-progress: false
+  group: deployforge-artifacts-${{ github.repository }}-${{ startsWith(github.ref, 'refs/tags/') && 'releases' || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 permissions:
   contents: read
 
 jobs:
   test:
-    name: Tests and Go build
+    name: Go tests and vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,26 +39,26 @@ jobs:
       - name: Vet
         working-directory: app
         run: go vet ./...
-      - name: Build
-        working-directory: app
-        run: go build -o deployforge-api ./cmd/api
 
   build-and-scan:
     name: Build and scan (${{ matrix.arch }})
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Image coordinates
         env:
@@ -73,6 +73,8 @@ jobs:
           context: app
           platforms: linux/${{ matrix.arch }}
           load: true
+          cache-from: type=gha,scope=deployforge-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=deployforge-${{ matrix.arch }}
           tags: ${{ env.IMAGE }}:${{ env.CANDIDATE }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}

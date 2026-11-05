@@ -154,7 +154,13 @@ Release state is persisted before tag creation and before invoking promotion.
 The GitOps engine checkpoints before Helm writes, commit and push, and after the
 commit/push/observations. Active releases exclude manual deployment and rollback;
 an already active manual operation rejects new releases. GitHub workflow concurrency
-serializes builds/publication without cancelling the running workflow. External
+serializes release builds/publication without cancelling a running release. Ordinary
+branch and PR CI use separate per-ref groups and cancel superseded runs. Images
+build on native AMD64 and ARM64 runners with separate GitHub Actions layer caches;
+QEMU and the duplicate standalone Go build are omitted. Tests, vet, and blocking
+HIGH/CRITICAL scans of both exact platform images remain mandatory. Cache reuse
+never skips scanning. ARM64 requires GitHub-hosted `ubuntu-24.04-arm` availability
+(the registered public DeployForge repository supports this runner). External
 manually created tags are not automatically promoted by DeployForge.
 
 On restart (with execution still explicitly enabled):
