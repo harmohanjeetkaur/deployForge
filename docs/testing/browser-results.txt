@@ -1,0 +1,44 @@
+
+> dashboard@0.0.0 test:e2e
+> playwright test releases.spec.js production-ui.spec.js rollback.spec.js
+
+
+Running 33 tests using 1 worker
+
+(node:PID) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 e2e/production-ui.spec.js:43:1 › normal UI hides simulation language and fails closed with actionable setup guidance (943ms)
+  ✓   2 e2e/production-ui.spec.js:52:1 › the primary action opens the change review; only confirmation executes (745ms)
+  ✓   3 e2e/production-ui.spec.js:62:1 › a simulation response never becomes deployment success (620ms)
+  ✓   4 e2e/production-ui.spec.js:70:1 › missing rollout health proof never becomes success (620ms)
+  ✓   5 e2e/production-ui.spec.js:76:1 › authentication failure clears credentials and allows recovery without weakening checks (661ms)
+  ✓   6 e2e/production-ui.spec.js:87:1 › progress separates commit, synchronization, rollout and final observed health (16.2s)
+  ✓   7 e2e/production-ui.spec.js:110:1 › history rollback action selects the revision and still requires verification, preview and confirmation (633ms)
+  ✓   8 e2e/production-ui.spec.js:119:1 › duplicate confirmation cannot create two submissions (587ms)
+  ✓   9 e2e/production-ui.spec.js:127:1 › sessions survive navigation without credentials in browser storage (619ms)
+  ✓  10 e2e/production-ui.spec.js:135:1 › mobile layout retains readable navigation and avoids double sidebar spacing or overflow (652ms)
+  ✓  11 e2e/releases.spec.js:38:1 › one click tracks complete release evidence and durable history after navigation (6.8s)
+  ✓  12 e2e/releases.spec.js:62:1 › disabled backend cannot create a release and never fabricates success (371ms)
+  ✓  13 e2e/releases.spec.js:69:1 › security failure shows safe retry and never a deployed version (7.0s)
+  ✓  14 e2e/releases.spec.js:79:1 › unapproved session cannot submit a release (813ms)
+  ✓  15 e2e/releases.spec.js:90:1 › progress links point to release evidence and rollout opens overview (884ms)
+  ✓  16 e2e/releases.spec.js:103:1 › waiting workflow links to filtered Actions then switches to actual run (3.7s)
+  ✓  17 e2e/releases.spec.js:112:1 › review state never links an unpushed GitOps commit or marks rollout complete (482ms)
+  ✓  18 e2e/releases.spec.js:121:62 › new release button respects failed history (532ms)
+  ✓  19 e2e/releases.spec.js:121:62 › new release button respects needs-review history (405ms)
+  ✓  20 e2e/releases.spec.js:121:62 › new release button respects ci history (357ms)
+  ✓  21 e2e/rollback.spec.js:50:1 › rollback execution uses authenticated API, shows both images and resets on selection (821ms)
+  ✓  22 e2e/rollback.spec.js:65:1 › simulated rollback job displays requested, in progress, then succeeded (6.8s)
+  ✓  23 e2e/rollback.spec.js:90:3 › rollback API error 401: Invalid deployment token (678ms)
+  ✓  24 e2e/rollback.spec.js:90:3 › rollback API error 409: A deployment is already in progress (610ms)
+  ✓  25 e2e/rollback.spec.js:90:3 › rollback API error 400: Git push failed; commit preserved locally (661ms)
+  ✓  26 e2e/rollback.spec.js:90:3 › rollback API error 400: Target is not a previous retained deployment revision (571ms)
+  ✓  27 e2e/rollback.spec.js:106:1 › rollback convergence timeout shows failure, clears busy state, and never retries (3.9s)
+  ✓  28 e2e/rollback.spec.js:120:1 › rollback remains tracked when a pending version change is rejected (660ms)
+  ✓  29 e2e/rollback.spec.js:148:3 › rollback disallows invalid/current/unretained target ghcr.io/harmohanjeetkaur/deployforge:5b6d2c0589ab9e4a6dedbde072a95ccf124921aa false (547ms)
+  ✓  30 e2e/rollback.spec.js:148:3 › rollback disallows invalid/current/unretained target ghcr.io/harmohanjeetkaur/deployforge:210426be6d6da6c2e16f234db410f83a0c98bbd2 true (512ms)
+  ✓  31 e2e/rollback.spec.js:148:3 › rollback disallows invalid/current/unretained target ghcr.io/harmohanjeetkaur/deployforge:latest false (453ms)
+  ✓  32 e2e/rollback.spec.js:148:3 › rollback disallows invalid/current/unretained target other/repo:5b6d2c0589ab9e4a6dedbde072a95ccf124921aa false (475ms)
+  ✓  33 e2e/rollback.spec.js:158:1 › rollback confirmation cancel never submits an operation (552ms)
+
+  33 passed (1.0m)

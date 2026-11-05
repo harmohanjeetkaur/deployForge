@@ -250,9 +250,14 @@ Security policy steps succeeded. Findings are capped at 500 displayed rows per
 architecture, with complete counts retained and full artifacts available in Actions.
 The Security page is read-only and cannot start a scan or a deployment.
 
-### UI screenshots
+### UI screenshots and testing evidence
 
-Current portfolio screenshots are in [Security](../docs/images/security-dashboard.png)
-and [Monitoring](../docs/images/monitoring-dashboard.png). Captures use read-only
-API requests, block deployment writes, and do not include credentials or Settings
-connection codes. They are documentation assets, not dashboard fixtures.
+The [main README gallery](../README.md#dashboard-screenshots) includes Overview,
+Create Release, Deployments, Security, Monitoring and Settings. These are live
+GET-only page captures with browser authorization stubbed as pending and operation
+writes blocked; no credentials or connection codes are shown.
+
+The [testing evidence gallery](../docs/testing/README.md) separately includes
+visibly labelled mocked release, deployment and rollback screenshots, actual
+backend/browser test receipts, source links and reproduction commands. Mocked
+success screenshots are not represented as real deployments.

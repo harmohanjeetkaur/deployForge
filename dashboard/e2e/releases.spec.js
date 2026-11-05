@@ -1,3 +1,4 @@
+import { captureDocumentation } from './documentation-capture.js'
 import { test, expect } from '@playwright/test'
 import { handleSession, executionConfig, setSession } from './ui-fixtures.js'
 const sha = 'a'.repeat(40), digest = `sha256:${'d'.repeat(64)}`
@@ -39,8 +40,10 @@ test('one click tracks complete release evidence and durable history after navig
   await page.getByRole('button', { name: 'Look up source commit' }).click()
   await expect(page.getByText('Approved source')).toBeVisible()
   await page.getByRole('textbox', { name: 'New release tag' }).fill('v1.2.0')
+  await captureDocumentation(page, 'create-release-input')
   await page.getByRole('button', { name: 'Create Tag & Deploy', exact: true }).click()
   await expect(page.getByText('Waiting for actual CI')).toBeVisible()
+  await captureDocumentation(page, 'create-release-ci')
   await expect(page.getByRole('button', { name: 'Create Tag & Deploy', exact: true })).toBeDisabled()
   await expect(page.getByText('Release deployed and observed healthy')).toBeVisible({ timeout: 15000 })
   expect(state.posts).toHaveLength(1)
@@ -49,6 +52,7 @@ test('one click tracks complete release evidence and durable history after navig
   await expect(page.getByText(digest, { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /Run 123/ })).toHaveAttribute('href', /actions\/runs\/123/)
   await expect(page.getByText('3/3 ready · Healthy')).toBeVisible()
+  await captureDocumentation(page, 'create-release-success')
   await page.getByRole('link', { name: 'Overview', exact: true }).click()
   await page.getByRole('link', { name: 'Create Release', exact: true }).click()
   await expect(page.getByText('Release deployed and observed healthy')).toBeVisible()

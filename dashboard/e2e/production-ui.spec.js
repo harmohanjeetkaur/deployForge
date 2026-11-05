@@ -1,3 +1,4 @@
+import { captureDocumentation } from './documentation-capture.js'
 import { refreshSessionFixture } from './ui-fixtures.js'
 import { handleSession } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
@@ -53,6 +54,7 @@ test('the primary action opens the change review; only confirmation executes', a
   await page.getByTestId('rollback-action').click()
   await expect(page.locator('.deploy-confirm-details')).toContainText(current)
   await expect(page.locator('.deploy-confirm-details')).toContainText(target)
+  await captureDocumentation(page, 'deployment-confirmation')
   expect(calls.count()).toBe(0)
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect(calls.count()).toBe(0)
@@ -98,10 +100,12 @@ test('progress separates commit, synchronization, rollout and final observed hea
   await expect(page.getByRole('status')).toHaveText('Deployment requested')
   await expect(page.locator('.commit-reference')).toContainText('c'.repeat(40))
   await expect(page.locator('.step-active')).toContainText('ArgoCD sync', { timeout: 10000 })
+  await captureDocumentation(page, 'deployment-progress')
   await expect(page.locator('.step-active')).toContainText('Kubernetes rollout')
   await expect(page.locator('.step-active')).toContainText('Health verification')
   await expect(page.getByRole('status')).toHaveText('Deployment healthy')
   await expect(page.locator('.step-complete')).toHaveCount(5)
+  await captureDocumentation(page, 'deployment-success')
 })
 test('history rollback action selects the revision and still requires verification, preview and confirmation', async ({ page }) => {
   const calls = await setup(page, { post: route => route.fulfill({ json: { ...healthy, operation: 'rollback' } }) })

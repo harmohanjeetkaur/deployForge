@@ -1,3 +1,4 @@
+import { captureDocumentation } from './documentation-capture.js'
 import { refreshSessionFixture } from './ui-fixtures.js'
 import { executionConfig , handleSession } from './ui-fixtures.js'
 import { test, expect } from '@playwright/test'
@@ -34,7 +35,7 @@ async function setup(page, { history = [past, { ...past, revision: '5', containe
   await page.locator('#version-select').selectOption('k8s-4')
 
 }
-async function confirm(page) {
+async function confirm(page, capture = false) {
   await page.getByRole('button', { name: 'Verify Image Availability', exact: true }).click()
   await expect(page.getByText('✓ Image verified in GHCR', { exact: true })).toBeVisible()
   await page.getByTestId('rollback-action').click()
@@ -42,6 +43,7 @@ async function confirm(page) {
   await expect(page.locator('.deploy-confirm-details')).toContainText(`${repo}:${current}`)
   await expect(page.locator('.deploy-confirm-details')).toContainText(`${repo}:${previous}`)
   await expect(page.locator('.deploy-confirm-warning')).toContainText('ArgoCD will reconcile')
+  if (capture) await captureDocumentation(page, 'rollback-confirmation')
   await page.getByRole('button', { name: 'Confirm Rollback', exact: true }).click()
 }
 
@@ -49,8 +51,9 @@ test('rollback execution uses authenticated API, shows both images and resets on
   let requests = 0
   await setup(page, { post: route => { requests++; return route.fulfill({ json: { operation: 'rollback', state: 'succeeded', progress: { requestAccepted: true, commitCreated: true, argoSynced: true, rolloutReady: true, healthy: true }, stage: 'healthy', pushed: true, commit: 'c'.repeat(40), dryRun: false, success: true, currentTag: current, tag: previous, message: 'Rollback dry run' } }) } })
   await expect(page.getByTestId('rollback-action')).toBeEnabled()
-  await confirm(page)
+  await confirm(page, true)
   await expect(page.getByRole('status')).toHaveText('Rollback healthy')
+  await captureDocumentation(page, 'rollback-success')
   await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(requests).toBe(1)
   await page.locator('#version-select').selectOption('')
@@ -72,6 +75,7 @@ test('simulated rollback job displays requested, in progress, then succeeded', a
   await confirm(page)
   await expect(page.getByRole('status')).toHaveText('Rollback requested')
   await expect(page.getByRole('status')).toHaveText('Rollback in progress')
+  await captureDocumentation(page, 'rollback-progress')
   await expect(page.getByRole('status')).toHaveText('Rollback healthy')
   await expect(page.getByTestId('rollback-action')).toBeEnabled()
   expect(polls).toBe(2)
